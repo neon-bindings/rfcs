@@ -6,10 +6,46 @@
 # Summary
 [summary]: #summary
 
-This RFC proposes changing the `neon` command-line tool to be a complete wrapper for `cargo` with defaults that make sense for Neon. Wherever standard Neon settings differ from standard Rust settings, `neon`'s defaults override the behavior of cargo's defaults. For example, `neon new` creates a standard Neon project layout instead of a standard Rust layout. Otherwise, `neon` delegates all commands and flags directly to cargo itself.
+This RFC proposes changing the `neon` command-line tool to be a complete wrapper for the cargo tool. Effectively, the `neon` executable should be thought of as the same as `cargo` but configured with defaults that make sense for Neon.
+
+Wherever standard Neon settings differ from standard Rust settings, `neon`'s defaults override the behavior of cargo's defaults. For example, `neon new` creates a standard Neon project layout instead of a standard Rust layout, and `neon build` builds a Neon project with all the right compiler flags. Otherwise, `neon` delegates all commands and flags directly to cargo itself.
+
+```
+$ neon new my-neon-lib
+     Created library `my-neon-lib` project
+$ cd my-neon-lib
+$ neon build
+    Updating registry `https://github.com/rust-lang/crates.io-index`
+ Downloading neon v0.1.20
+ Downloading neon-runtime v0.1.20
+ Downloading libc v0.2.33
+ Downloading neon-build v0.1.20
+   Compiling cslice v0.2.0
+   Compiling utf8-ranges v1.0.0
+   Compiling void v1.0.2
+   Compiling neon-build v0.1.20
+   Compiling gcc v0.3.54
+   Compiling libc v0.2.33
+   Compiling lazy_static v0.2.9
+   Compiling regex-syntax v0.4.1
+   Compiling unreachable v1.0.0
+   Compiling neon v0.1.20
+   Compiling my-neon-lib v0.1.0 (file:///home/dherman/Sources/my-neon-lib/native)
+   Compiling thread_local v0.3.4
+   Compiling memchr v1.0.2
+   Compiling aho-corasick v0.6.3
+   Compiling regex v0.2.2
+   Compiling neon-runtime v0.1.20
+    Finished release [optimized] target(s) in 37.4 secs
+$ neon run
+hello neon!
+```
+
 
 # Motivation
 [motivation]: #motivation
+
+The purpose of the `neon` CLI tool is to act like cargo for Neon projects: a one-stop workflow tool for generating, building, and managing Neon projects. While abstract over some of the flags required to properly build a Neon project.
 
 The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist.
 
