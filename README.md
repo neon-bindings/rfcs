@@ -44,8 +44,8 @@ The steps are:
 - Build consensus and integrate feedback. RFCs that have broad support are much more likely to make progress than those that don't receive any comments. Feel free to reach out to the project maintainers to get help identifying stakeholders and obstacles.
 - The project maintainers will discuss the RFC pull request, as much as possible in the comment thread. Offline discussion will be summarized on the pull request comment thread.
 - At some point, the project maintainers will announce a proposed conclusion and tag the RFC with a `final comment period` label, giving the community a last opportunity to discuss the proposed conclusion.
-- Once an RFC enters its final comment period, if the level of discussion is relatively quiet, the maintainers will finalize the decision and either merge or reject the RFC pull request.
-- On the other hand, if there is a significant new amount of discussion, the maintainers will decide to remove the `final comment period` label and allow discussion to continue.
+- Once an RFC enters its final comment period, if the discussion appears to have stabilized, the maintainers will finalize the decision and either merge or reject the RFC pull request.
+- On the other hand, if there are significant new constraints or ideas being surfaced, the maintainers will decide to remove the `final comment period` label and allow discussion to continue.
 
 # License
 
