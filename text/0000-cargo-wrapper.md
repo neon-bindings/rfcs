@@ -110,11 +110,11 @@ As a convenience, the `neon new` should generate a simple binary at `src/bin/mai
 
 ### `neon test`
 
-**Open question**
+Initially this will not be supported, but a follow-up RFC should figure out how to make unit testing work. This will need to grapple with the question of debug vs release builds, as well as the question of whether unit tests can usefully use any of the Neon library without a running Node process.
 
 ### `neon bench`
 
-**Open question**
+Initially this will not be supported, and `cargo bench` itself seems to be a fairly preliminary feature. However, it would be nice to see a follow-up RFC looking into ways we can simplify the process of benchmarking Neon projects.
 
 
 ### Directly delegated commands
