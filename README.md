@@ -8,6 +8,12 @@ Some changes are substantial, and we ask that these be put through a bit of desi
 
 The RFC process is intended to provide a consistent, well-considered path for features and changes to make it into the project, so that all stakeholders can feel confident about the direction of the project.
 
+# Table of contents
+
+  - [When you need an RFC](#when-you-need-an-rfc)
+  - [The process](#the-process)
+  - [License](#license)
+
 # When you need an RFC
 
 You need an RFC if you intend to make substantial changes to Neon, the Neon API, the Neon CLI, or the RFC process itself. What constitutes a "substantial" change is evolving based on community norms, but may including the following:
