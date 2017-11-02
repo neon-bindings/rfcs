@@ -30,7 +30,7 @@ $ neon build
    Compiling regex-syntax v0.4.1
    Compiling unreachable v1.0.0
    Compiling neon v0.1.20
-   Compiling my-neon-lib v0.1.0 (file:///home/dherman/Sources/my-neon-lib/native)
+   Compiling my-neon-lib v0.1.0 (file:///home/dherman/Sources/my-neon-lib)
    Compiling thread_local v0.3.4
    Compiling memchr v1.0.2
    Compiling aho-corasick v0.6.3
@@ -45,15 +45,11 @@ hello neon!
 # Motivation
 [motivation]: #motivation
 
-The purpose of the `neon` CLI tool is to act like cargo for Neon projects: a one-stop workflow tool for generating, building, and managing Neon projects. While abstract over some of the flags required to properly build a Neon project.
-
-## Redesigned `neon` CLI
-
-The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist.
+The purpose of the `neon` CLI tool is to act like Cargo for Neon projects: a one-stop workflow tool for generating, building, and managing Neon projects. While abstract over some of the flags required to properly build a Neon project.
 
 ## Modified project layout
 
-The existing Neon project layout is set up so that the top-level directory is an npm package but not a Rust crate, and it _contains_ a Rust crate in the `native/` subdirectory. This means that different tools apply to different parts of the project (`npm` and `neon` to the project root; `cargo` to the `native/` subdirectory). This can also leave the user confused about which directory they should be in and which tool they should use at any given time.
+The current Neon project layout is set up so that the top-level directory is an npm package but not a Rust crate, and it _contains_ a Rust crate in the `native/` subdirectory. This means that different tools apply to different parts of the project (`npm` and `neon` to the project root; `cargo` to the `native/` subdirectory). This can also leave the user confused about which directory they should be in and which tool they should use at any given time.
 
 ```
 my-neon-lib
@@ -69,7 +65,7 @@ my-neon-lib
 └── README.md
 ```
 
-This RFC proposes collapsing this space of possibilities to eliminate potential points of confusion and any cognitive overhead associated with knowing which directory a user must be in and which tool applies where. The new layout makes a Neon project _both_ an npm package _and_ a Rust crate, and the `neon` tool _replaces_ the `cargo` tool, which should never be used.
+This RFC proposes collapsing this space of possibilities to **eliminate confusion and cognitive overhead** associated with knowing which directory a user must be in and which tool applies where. The new layout makes a Neon project **_both_ an npm package _and_ a Rust crate**. The `neon` tool _replaces_ the `cargo` executable entirely in a Neon programmer's workflow; that is, `cargo` should never be used in a Neon project. Moreover, the `neon` tool should work regardless of what subdirectory of the project a user happens to be in (just as cargo works today).
 
 ```
 my-neon-lib
@@ -83,6 +79,55 @@ my-neon-lib
 └── src
     └── lib.rs
 ```
+
+## Redesigned `neon` CLI
+
+The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist.
+
+### `neon new`
+
+Creates a Neon project, which is always a `--lib` crate. The `--exe` flag is an error.
+
+### `neon init`
+
+Similar to `neon new` but for initializing an existing directory as a Neon project.
+
+### `neon build`
+
+Builds a Neon project with `cargo build`, passing in the necessary default flags, and produces `addon.node` from the resulting shared library. This command also uses some npm environment variables and the dirty state of `addon.node` to determine if the build is stale, in addition to all of the default Cargo rules for dirty checking.
+
+### `neon clean`
+
+Clears out build artifacts just as with `cargo clean`, but also clears the additional build caching information created by `neon build`.
+
+### `neon check`
+
+Just like `cargo check`, this command checks a Neon project's Rust code and all its dependencies for errors without building. Like `neon build`, it passes in the necessary default flags.
+
+### `neon run`
+
+As a convenience, the `neon new` should generate a simple binary at `src/bin/main.rs` that just launches `node -e 'require(".")'` from the project root directory. This allows Neon programmers to quickly test out projects with a single command. This is also useful for on-boarding documentation and talks, where people seeing Neon for the first time can see an end-to-end working "hello world" with one single command.
+
+### `neon test`
+
+**Open question**
+
+### `neon bench`
+
+**Open question**
+
+
+### Directly delegated commands
+
+The following commands delegate directly to `cargo` with no interesting modifications:
+
+- `neon doc`
+- `neon update`
+- `neon search`
+- `neon publish`
+- `neon install`
+- `neon uninstall`
+
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
