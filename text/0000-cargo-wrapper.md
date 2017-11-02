@@ -82,7 +82,7 @@ my-neon-lib
 
 ## Redesigned `neon` CLI
 
-The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist.
+The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist. So in the meantime, we will provide `neon` as a wrapper around `cargo`, and eventually deprecate this once we can move to `cargo` proper.
 
 ### `neon new`
 
@@ -132,19 +132,39 @@ The following commands delegate directly to `cargo` with no interesting modifica
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
+A Neon project is both an npm package _and_ a Rust crate, with JS sources in `lib/` and Rust sources in `src/` (following the two ecosystems' conventions). Conceptually, you can think of a Neon project as having a Node _interface_ and a Rust _implementation_. In particular, to the users of the package, they will interact with it as a regular JS library.
+
+Neon provides a modified version of Rust's Cargo command-line tool for creating and working with Neon packages. You can install the Neon command-line interface via:
+
+```
+$ npm install -g neon-cli
+```
+
+This installs a `neon` executable on your machine, which, along with `npm` or `yarn`, will be your primary tool for working with your Neon projects. You should never need to use Cargo directly, since `neon` provides the same commands as `cargo`.
+
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
+The CLI documentation for the `neon` CLI should mostly be taken from the `cargo` CLI documentation, with small modifications according to the changes listed above.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
+Wrappers are a maintenance burden since they have to keep up with the tool they wrap. They can also lead to confusing or inconsistent error messages. We should pay close attention to error handling to try to make this manageable. This is also somewhat mitigated by explaining `neon` as a thin wrapper, so the user's mental model is "Cargo with the right settings for Neon" instead of a distinct abstraction layer. And of course eventually we want to eliminate this, assuming Cargo will provide the right extension hooks. This seems to be a pretty high priority for the Rust tools subteam so I'm cautiously optimistic.
+
+Some may feel the merged project layout will feel messy or confusing, as opposed to the current cordoning off of the Rust directory under `native/`. However, I think the benefit of decreased decisions and mental context outweighs the messiness, and the most important hygiene constraint--source files kept in separate subdirectories--is still met.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
 
+We could wait for Cargo to get all the extension hooks necessary, but in the meantime multiple users report mental model confusion about when to use `neon` and when to use `cargo`.
+
+We could keep the existing project layout, but this adds mental overhead. Programmers have to move around directories to look at the project configuration, and possibly also can only use `neon` when sitting within the `native/` subdirectory. (We could make `neon` work from any subdirectory of the project root, but might be slightly more confusing.) In effect, the mental model is "this project is both an npm package and a Rust crate", which eliminates any doubt about whether Rust operations are applicable in any given context.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
+- What about transpiled languages (e.g. TypeScript) that want to use `src/` for the un-transpiled source?
+- Unit tests (see `neon test` above)
+- Benchmarks (see `neon bench` above)
