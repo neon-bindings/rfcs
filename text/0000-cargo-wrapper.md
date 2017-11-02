@@ -47,7 +47,42 @@ hello neon!
 
 The purpose of the `neon` CLI tool is to act like cargo for Neon projects: a one-stop workflow tool for generating, building, and managing Neon projects. While abstract over some of the flags required to properly build a Neon project.
 
+## Redesigned `neon` CLI
+
 The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. However, this relies on cargo extension hooks that do not yet exist.
+
+## Modified project layout
+
+The existing Neon project layout is set up so that the top-level directory is an npm package but not a Rust crate, and it _contains_ a Rust crate in the `native/` subdirectory. This means that different tools apply to different parts of the project (`npm` and `neon` to the project root; `cargo` to the `native/` subdirectory). This can also leave the user confused about which directory they should be in and which tool they should use at any given time.
+
+```
+my-neon-lib
+├── lib
+│   └── index.js
+├── native
+│   ├── build.rs
+│   ├── Cargo.toml
+│   ├── index.node
+│   └── src
+│       └── lib.rs
+├── package.json
+└── README.md
+```
+
+This RFC proposes collapsing this space of possibilities to eliminate potential points of confusion and any cognitive overhead associated with knowing which directory a user must be in and which tool applies where. The new layout makes a Neon project _both_ an npm package _and_ a Rust crate, and the `neon` tool _replaces_ the `cargo` tool, which should never be used.
+
+```
+my-neon-lib
+├── addon.node
+├── build.rs
+├── Cargo.toml
+├── lib
+│   └── index.js
+├── package.json
+├── README.md
+└── src
+    └── lib.rs
+```
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
