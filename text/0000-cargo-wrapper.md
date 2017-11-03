@@ -86,7 +86,7 @@ The long-term goal of the `neon` CLI should be to go away and be replaced by a p
 
 ### `neon new`
 
-Creates a Neon project, which is always a `--lib` crate. The `--exe` flag is an error.
+Creates a Neon project, which is always a `--lib` crate. The `--bin` flag is an error.
 
 ### `neon init`
 
