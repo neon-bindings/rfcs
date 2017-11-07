@@ -14,7 +14,7 @@ Wherever standard Neon settings differ from standard Rust settings, `vargo`'s de
 $ vargo new my-neon-lib
      Created library `my-neon-lib` project
 $ cd my-neon-lib
-$ neon build
+$ vargo build
     Updating registry `https://github.com/rust-lang/crates.io-index`
  Downloading neon v0.1.20
  Downloading neon-runtime v0.1.20
@@ -37,7 +37,7 @@ $ neon build
    Compiling regex v0.2.2
    Compiling neon-runtime v0.1.20
     Finished release [optimized] target(s) in 37.4 secs
-$ neon run
+$ vargo run
 hello neon!
 ```
 
