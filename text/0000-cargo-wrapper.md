@@ -142,7 +142,7 @@ Neon provides a modified version of Rust's Cargo command-line tool for creating 
 $ cargo install vargo
 ```
 
-This installs a `vargo` executable on your machine, which, along with `npm` or `yarn`, will be your primary tool for working with your Neon projects. You should never need to use Cargo directly, since `neon` provides the same commands as `cargo`.
+This installs a `vargo` executable on your machine, which, along with `npm` or `yarn`, will be your primary tool for working with your Neon projects. You should never need to use Cargo directly, since `vargo` provides the same commands as `cargo`.
 
 
 # Reference-level explanation
