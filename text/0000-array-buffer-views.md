@@ -56,7 +56,7 @@ Notice how in the last example, the first two `u32` values are indexed at 32-bit
 +-----+-----+-----------+
 | u32 | u32 |    f64    |
 +-----+-----+-----------+
-0     4     8
+0     4     8           16
 ```
 
 then the first two cells are located at byte offsets 0 and 4 respectively and `u32` offsets 0 and 1 respectively, and the third cell is located at byte offset 8 and `f64` offset 1.
