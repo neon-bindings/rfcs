@@ -46,6 +46,8 @@ The key insight behind this RFC is that we can provide an abstraction that intui
 
 What’s more, the use of `mut` now corresponds to whether the JavaScript VM’s state can be modified, which is a much more natural use of mutability annotations. This also makes it easier to explain *why* the `vm` argument should be annotated as `mut` for passing mutable references to other functions.
 
+Finally, this design sets the stage for [a more complete design of the macro syntax](https://gist.github.com/dherman/d1d6d62e4e44ffbee1e1eebd51b53f06#file-classes_two_point_oh-rs-L48-L63), which should be fleshed out in a subsequent "Classes 2.0" RFC. In particular, the new syntax should allow an optional identifier (conventionally, this would normally be named `vm`), and an optional `mut` annotation, before the formal parameters list. Taking a representation of the state of the JavaScript VM, which is required for passing to many Neon APIs, again provides a higher level of abstraction than a representation of a function activation in the form of a `FunctionCall` struct. This makes for a gentler slope from the highest-level convenience syntaxes to the more expressive forms.
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
