@@ -85,14 +85,14 @@ This allows you to use APIs that require a mutable reference to the VM.
 
 ## Locking the VM
 
-Some type of JavaScript values—such as typed arrays, or instances of Neon classes—implement an `Inspect` trait, which allows Rust to access their internals. In order to get access to these internals, you first need to *take out a lock* on the JavaScript VM. The `Vm::lock` method “freezes” the VM and produces a temporary `Lock` object, which you can then use to inspect the object.
+Some type of JavaScript values—such as typed arrays, or instances of Neon classes—implement a `RefValue` trait, which allows you to _borrow_ their internals in Rust code. In order to get access to these internals, you first need to *take out a lock* on the JavaScript VM. The `Vm::lock` method “freezes” the VM and produces a temporary `Lock` object, which you can then use to get temporary access to their internals.
 
-For example, a simple Neon function that takes a single `ArrayBuffer` object and sets its first byte to 0 would be implemented by calling `vm.lock()` and then `lock.inspect()` with the resulting lock object:
+For example, a simple Neon function that takes a single `ArrayBuffer` object and sets its first byte to 0 would be implemented by calling `vm.lock()` and then `array_buffer.borrow_mut(&lock)` with the resulting lock object:
 
 ```rust
 function zero_first_byte(mut vm, array_buffer: Handle<JsArrayBuffer>) {
     let lock = vm.lock();
-    let mut contents = lock.inspect(array_buffer);
+    let mut contents = array_buffer.borrow_mut(&lock);
     let mut buf = contents.as_u8_slice();
     buf[0] = 0;
     Ok(())
@@ -120,7 +120,7 @@ fn zero_first_byte(mut vm: impl Vm) -> JsResult<JsUndefined> {
     let array_buffer = vm.argument(0).unwrap().check::<JsArrayBuffer>()?;
     {
         let lock = vm.lock();
-        let mut contents = lock.inspect(array_buffer);
+        let mut contents = array_buffer.borrow_mut(&lock);
         let mut buf = contents.as_u8_slice();
         buf[0] = 0;
     }
@@ -236,11 +236,28 @@ These types correspond to different context-sensitive views of the JavaScript vi
 
 ## The `Lock` type
 
-The `Lock` type is produced by the `vm.lock()` method described above, and can be used to inspect the internals of JavaScript values:
+The `Lock` type is produced by the `vm.lock()` method described above, and can be used to borrow the internals of JavaScript values. These values must implement the `RefValue` trait:
 
 ```rust
-impl Lock {
-    fn inspect<T: Inspect>(&self, value: Handle<T>) -> &mut T::Internals;
+unsafe trait RefValue {
+    type Internals;
+
+    fn borrow(&self, lock: &Lock) -> Ref<Self::Internals>;
+    fn borrow_mut(&mut self, lock: &Lock) -> RefMut<Self::Internals>;
+    fn try_borrow(&self, lock: &Lock) -> Option<Ref<Self::Internals>>;
+    fn try_borrow_mut(&mut self, lock: &Lock) -> Option<RefMut<Self::Internals>>;
+}
+```
+
+The implementation of `RefValue` will typically use an unsafe constructor for the `Ref` and `RefMut` types, which dynamically borrow the memory region associated with the JS object. This maintains an interval tree internally in the state of the `Lock` object to ensure that overlapping memory regions are never incompatibly borrowed, respecting the rules of Rust borrowing. The `Ref` and `RefMut` types also implement `Drop`, so the memory region being borrowed is removed from the interval tree when a reference goes out of scope.
+
+```rust
+impl Ref<T> {
+    unsafe new(lock: &Lock, address: *const c_void, size: usize) -> Option<Ref<T>>;
+}
+
+impl RefMut<T> {
+    unsafe new(lock: &Lock, address: *const c_void, size: usize) -> Option<RefMut<T>>;
 }
 ```
 
