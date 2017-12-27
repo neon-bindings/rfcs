@@ -53,7 +53,7 @@ Finally, this design sets the stage for [a more complete design of the macro syn
 
 ## The `Vm` trait
 
-Most Neon functions take an extra parameter in the form of a mutable reference to an implementation of the `Vm` trait. This parameter roughly represents access to the JavaScript virtual machine. For example, the `Object::get` method for getting a property of a JavaScript object requires an extra `Vm` parameter:
+Most Neon APIs take an extra parameter in the form of a mutable reference to an implementation of the `Vm` trait. This parameter roughly represents access to the JavaScript virtual machine. For example, the `Object::get` method for getting a property of a JavaScript object requires an extra `Vm` parameter:
 
 ```rust
 let foo = obj.get(&mut vm, "foo");
@@ -63,6 +63,26 @@ A good way to think about the `Vm` object is that it represents **the power to m
 
 A powerful implication of this is that an API that does *not* take a mutable reference to a `Vm` **can never modify the JavaScript virtual machine**! This allows Neon to provide the ability to safely *lock* the virtual machine temporarily, allowing Rust code to inspect and modify the internals of native objects or typed arrays.
 
+## Accessing the VM
+
+When implementing a native JavaScript function or method, the [function definition syntax](https://github.com/neon-bindings/rfcs/issues/6) allows you to include an optional VM parameter. You can give it whatever variable name you like, but the name `vm` is customary:
+
+```rust
+function zero_first_byte(vm, buffer: Handle<JsArrayBuffer>) {
+    // ...
+}
+```
+
+This `vm` parameter has a type that implements the `Vm` trait. You will typically want to declare the `vm` parameter to be mutable:
+
+```rust
+function zero_first_byte(mut vm, buffer: Handle<JsArrayBuffer>) {
+    // ...
+}
+```
+
+This allows you to use APIs that require a mutable reference to the VM.
+
 ## Locking the VM
 
 Some type of JavaScript values—such as typed arrays, or instances of Neon classes—implement an `Inspect` trait, which allows Rust to access their internals. In order to get access to these internals, you first need to *take out a lock* on the JavaScript VM. The `Vm::lock` method “freezes” the VM and produces a temporary `Lock` object, which you can then use to inspect the object.
@@ -70,14 +90,49 @@ Some type of JavaScript values—such as typed arrays, or instances of Neon clas
 For example, a simple Neon function that takes a single `ArrayBuffer` object and sets its first byte to 0 would be implemented by calling `vm.lock()` and then `lock.inspect()` with the resulting lock object:
 
 ```rust
-fn zero_first_byte(mut vm: impl Vm) -> JsResult<Handle<JsNumber>> {
-    let array_buffer = vm.argument(0).unwrap().check::<JsArrayBuffer>()?;
+function zero_first_byte(mut vm, array_buffer: Handle<JsArrayBuffer>) {
     let lock = vm.lock();
     let mut contents = lock.inspect(array_buffer);
     let mut buf = contents.as_u8_slice();
     buf[0] = 0;
     Ok(())
 }
+```
+
+## Programmatically creating functions
+
+If you prefer not to use the high-level `function` syntax, you can use the programmatic API for creating functions. The signature for the `zero_first_byte` function, for example, would look like this:
+
+```rust
+fn zero_first_byte<V: Vm>(mut vm: V) -> JsResult<JsUndefined> { /* ... */ }
+```
+
+Using Rust's [upcoming `impl Trait` shorthand](https://github.com/rust-lang/rust/issues/34511), this can be shortened to:
+
+```rust
+fn zero_first_byte(mut vm: impl Vm) -> JsResult<JsUndefined> { /* ... */ }
+```
+
+The full implementation of `zero_first_byte` would then be:
+
+```rust
+fn zero_first_byte(mut vm: impl Vm) -> JsResult<JsUndefined> {
+    let array_buffer = vm.argument(0).unwrap().check::<JsArrayBuffer>()?;
+    {
+        let lock = vm.lock();
+        let mut contents = lock.inspect(array_buffer);
+        let mut buf = contents.as_u8_slice();
+        buf[0] = 0;
+    }
+    Ok(vm.undefined())
+}
+
+// ...
+
+// Create the JS function object:
+let f = JsFunction::new(zero_first_byte);
+
+// ...
 ```
 
 # Reference-level explanation
