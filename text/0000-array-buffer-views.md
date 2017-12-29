@@ -13,6 +13,8 @@ This RFC proposes changing `JsArrayBuffer`'s implementation of [vm::Lock](https:
 
 The `JsArrayBuffer` API currently gives direct access to a `CMutSlice<u8>`, but if you want to operate on the data at different primitive types, you have to use unsafe code to transmute the slice. Any time Neon users are tempted to use unsafe code we should make sure there are easier safe APIs available for them to use instead.
 
+Moreover, the use of `CMutSlice` instead of Rust's built-in slice types turns out to have been unnecessary. Giving Rust programs direct access to native Rust slices means Neon programs can make use of any abstractions that operate on Rust slices.
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
@@ -111,7 +113,7 @@ let first: u32 = buffer.grab(|contents| {
 });
 ```
 
-Here, because of the type annotation on `first`, the `as_slice` method is inferred to produce a `CSlice<u32>`.
+Here, because of the type annotation on `first`, the `as_slice` method is inferred to produce an `&[u32]`.
 
 ### Custom view types
 
@@ -131,8 +133,8 @@ The primary change to `JsArrayBuffer` is in its implementation of the `Lock` tra
 struct ArrayBufferView;
 
 impl ArrayBufferView {
-    fn as_slice<T: ViewType>(&self) -> CSlice<T>;
-    fn as_mut_slice<T: ViewType>(&mut self) -> CMutSlice<T>;
+    fn as_slice<T: ViewType>(&self) -> &[T];
+    fn as_mut_slice<T: ViewType>(&mut self) -> &mut [T];
     fn len(&self) -> usize;
 }
 ```
@@ -176,35 +178,35 @@ Some contexts of use of `as_slice()` may not provide enough information to Rust'
 
 ```rust
 impl ArrayBufferView {
-    fn as_u8_slice(&self) -> CSlice<u8>;
-    fn as_mut_u8_slice(&mut self) -> CMutSlice<u8>;
+    fn as_u8_slice(&self) -> &[u8];
+    fn as_mut_u8_slice(&mut self) -> &mut [u8];
 
-    fn as_i8_slice(&self) -> CSlice<i8>;
-    fn as_mut_i8_slice(&mut self) -> CMutSlice<i8>;
+    fn as_i8_slice(&self) -> &[i8];
+    fn as_mut_i8_slice(&mut self) -> &mut [i8];
 
-    fn as_u16_slice(&self) -> CSlice<u16>;
-    fn as_mut_u16_slice(&mut self) -> CMutSlice<u16>;
+    fn as_u16_slice(&self) -> &[u16];
+    fn as_mut_u16_slice(&mut self) -> &mut [u16];
 
-    fn as_i16_slice(&self) -> CSlice<i16>;
-    fn as_mut_i16_slice(&mut self) -> CMutSlice<i16>;
+    fn as_i16_slice(&self) -> &[i16];
+    fn as_mut_i16_slice(&mut self) -> &mut [i16];
 
-    fn as_u32_slice(&self) -> CSlice<u32>;
-    fn as_mut_u32_slice(&mut self) -> CMutSlice<u32>;
+    fn as_u32_slice(&self) -> &[u32];
+    fn as_mut_u32_slice(&mut self) -> &mut [u32];
 
-    fn as_i32_slice(&self) -> CSlice<i32>;
-    fn as_mut_i32_slice(&mut self) -> CMutSlice<i32>;
+    fn as_i32_slice(&self) -> &[i32];
+    fn as_mut_i32_slice(&mut self) -> &mut [i32];
 
-    fn as_u64_slice(&self) -> CSlice<u64>;
-    fn as_mut_u64_slice(&mut self) -> CMutSlice<u64>;
+    fn as_u64_slice(&self) -> &[u64];
+    fn as_mut_u64_slice(&mut self) -> &mut [u64];
 
-    fn as_i64_slice(&self) -> CSlice<i64>;
-    fn as_mut_i64_slice(&mut self) -> CMutSlice<i64>;
+    fn as_i64_slice(&self) -> &[i64];
+    fn as_mut_i64_slice(&mut self) -> &mut [i64];
 
-    fn as_f32_slice(&self) -> CSlice<f32>;
-    fn as_mut_f32_slice(&mut self) -> CMutSlice<f32>;
+    fn as_f32_slice(&self) -> &[f32];
+    fn as_mut_f32_slice(&mut self) -> &mut [f32];
 
-    fn as_f64_slice(&self) -> CSlice<f64>;
-    fn as_mut_f64_slice(&mut self) -> CMutSlice<f64>;
+    fn as_f64_slice(&self) -> &[f64];
+    fn as_mut_f64_slice(&mut self) -> &mut [f64];
 }
 ```
 
@@ -218,17 +220,13 @@ It's annoying that multiple mutable views have to be in separate scopes. This mi
 
 An alternative approach would be to use JavaScript typed array views to determine the type of the Rust slice. But this would require allocating different JS objects and passing values back and forth between Rust and JS. All Rust really needs is the backing store; by contrast, the typed array view objects only exist because they are a dynamic language's approach to aliasing views over a backing store. So this design prefers to focus on the underlying `ArrayBuffer` and let Rust operate on its data through different Rust view types.
 
+By providing direct access to the buffer at various Rust slice types, we make the endianness of operations on typed arrays non-portable. An alternative approach would be to use a wrapper type that either guarantees little-endianness (translating with a slower path on big-endian systems), or requires programs to be explicit about which they are using. However, JavaScript has also made the same decision to use the native system endianness, and in practice, little-endianness seems to have taken over the world. So this should make Neon code no less portable than pure JavaScript code that operates on typed arrays, and the increasingly rare big-endian-only systems will simply suffer from occasional bugs. In short: [JavaScript has bet on the death of big-endian systems](http://calculist.org/blog/2012/04/25/the-little-endian-web/), and we are drafting off of their decision.
+
+Similarly, we might also have chosen to put a protective abstraction in front of the slices to canonicalize NaN values. JavaScript engines have to do this when converting between data in the backing store and JavaScript values, but we don't have to be responsible for that. If signalling NaN values were a source of undefined behavior, we could have had a problem. Luckily, [signalling Nan is defined in Rust](https://twitter.com/gankro/status/931535748628729856) so we're safe.
+
+We could have added more API conveniences, including splitting views and working with various `ArrayBufferView` typed array types. We can safely leave these considerations to future RFCs, since they don't affect the design of the core API.
+
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-Should we include methods for splitting an `ArrayBufferView` at a particular index, allowing distinct sub-slices to be aliased to different slice types at the same time? This seems potentially useful but probably could be separated into its own proposal.
-
-Is there value in also defining an API for working with typed arrays? It seems less crucial but maybe avoids unnecessary allocations. At any rate it seems like it could be presented orthogonally.
-
-Should we ensure that multibyte data is [always little-endian](http://calculist.org/blog/2012/04/25/the-little-endian-web/), regardless of the architecture? I think the answer is probably yes for maximum portability. Maybe we could offer a less convenient variant that is platform-specific, like `struct u32_sys_endian(u32)` for the uncommon case of non-portable system-endianness?
-
-Are there any security or portability issues around encodings of NaN or subnormals?
-
-What are the detailed requirements of the `ViewType` trait?
-
-We should also be able to consume and produce typed array objects, even though this API focuses on the `ArrayBuffer` so far. That should be a lighter-weight layer on top of the one described here. This should be added to this RFC.
+We need to determine the detailed requirements of the `ViewType` trait. This can be determined during the initial implementation work for this RFC.
