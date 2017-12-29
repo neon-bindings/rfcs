@@ -6,7 +6,7 @@
 # Summary
 [summary]: #summary
 
-This RFC proposes changing `JsArrayBuffer`'s implementation of [vm::Lock](https://api.neon-bindings.com/neon/vm/trait.lock) to expose a zero-cost `ArrayBufferView` type, which gives access to the underlying buffer data with all the view types of JavaScript's [typed arrays](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays).
+This RFC proposes changing `JsArrayBuffer`'s implementation of [vm::Lock](https://api.neon-bindings.com/neon/vm/trait.lock) to expose a zero-cost `ArrayBufferData` type, which gives access to the underlying buffer data with all the view types of JavaScript's [typed arrays](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays).
 
 # Motivation
 [motivation]: #motivation
@@ -26,7 +26,7 @@ let buffer: Handle<JsArrayBuffer> = x.check::<JsArrayBuffer>()?;
 
 ## Reading buffer data
 
-A `JsArrayBuffer` provides access to its internal buffer via the [`Lock::grab`](https://api.neon-bindings.com/neon/vm/trait.lock#method.grab) method. By calling the `grab` method with a callback, your code is given access to an `ArrayBufferView` struct. You can use this struct to get views over the buffer with different typed formats. For example, as a `u32` slice:
+A `JsArrayBuffer` provides access to its internal buffer via the [`Lock::grab`](https://api.neon-bindings.com/neon/vm/trait.lock#method.grab) method. By calling the `grab` method with a callback, your code is given access to an `ArrayBufferData` struct. You can use this struct to get views over the buffer with different typed formats. For example, as a `u32` slice:
 
 ```rust
 let first: u32 = buffer.grab(|contents| {
@@ -125,14 +125,14 @@ This also makes it possible to create custom `ViewType` implementations for cust
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-## The `ArrayBufferView` type
+## The `ArrayBufferData` type
 
-The primary change to `JsArrayBuffer` is in its implementation of the `Lock` trait. Instead of defining the associated type `Internals` directly as `CMutSlice<u8>`, we change it to a newly-defined `neon::js::binary::ArrayBufferView` struct type:
+The primary change to `JsArrayBuffer` is in its implementation of the `Lock` trait. Instead of defining the associated type `Internals` directly as `CMutSlice<u8>`, we change it to a newly-defined `neon::js::binary::ArrayBufferData` struct type:
 
 ```rust
-struct ArrayBufferView;
+struct ArrayBufferData;
 
-impl ArrayBufferView {
+impl ArrayBufferData {
     fn as_slice<T: ViewType>(&self) -> &[T];
     fn as_mut_slice<T: ViewType>(&mut self) -> &mut [T];
     fn len(&self) -> usize;
@@ -177,7 +177,7 @@ While it requires `unsafe` code, this design allows users to define their own `V
 Some contexts of use of `as_slice()` may not provide enough information to Rust's type inference algorithm to determine the `ViewType`, leading to potentially confusing errors. Especially for teaching material and for making this more accessible to new Rust programmers, this proposal also includes convenience methods that are fixed to a specific type.
 
 ```rust
-impl ArrayBufferView {
+impl ArrayBufferData {
     fn as_u8_slice(&self) -> &[u8];
     fn as_mut_u8_slice(&mut self) -> &mut [u8];
 
@@ -224,7 +224,7 @@ By providing direct access to the buffer at various Rust slice types, we make th
 
 Similarly, we might also have chosen to put a protective abstraction in front of the slices to canonicalize NaN values. JavaScript engines have to do this when converting between data in the backing store and JavaScript values, but we don't have to be responsible for that. If signalling NaN values were a source of undefined behavior, we could have had a problem. Luckily, [signalling Nan is defined in Rust](https://twitter.com/gankro/status/931535748628729856) so we're safe.
 
-We could have added more API conveniences, including splitting views and working with various `ArrayBufferView` typed array types. We can safely leave these considerations to future RFCs, since they don't affect the design of the core API.
+We could have added more API conveniences, including splitting views and working with various typed array types. We can safely leave these considerations to future RFCs, since they don't affect the design of the core API.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
