@@ -51,7 +51,9 @@ Ideally, the `neon` tool would not exist as a separate command, but rather as cu
 
 ## Modified project layout
 
-The current Neon project layout is set up so that the top-level directory is an npm package but not a Rust crate, and it _contains_ a Rust crate in the `native/` subdirectory. This means that different tools apply to different parts of the project (`npm` and `neon` to the project root; `cargo` to the `native/` subdirectory). This can also leave the user confused about which directory they should be in and which tool they should use at any given time.
+The current Neon project layout is set up so that the top-level directory is an npm package but not a Rust project, and it _contains_ a Rust crate in the `native/` subdirectory. This means that different tools apply to different parts of the project (`npm` and `neon` to the project root; `cargo` to the `native/` subdirectory). This can also leave the user confused about which directory they should be in and which tool they should use at any given time.
+
+On the positive side, keeping the Rust and JavaScript directories separate avoids name collisions, in particular between the `src/` directory convention of Rust projects and the `src/` directory convention of JavaScript projects that use popular transpilers like Babel or TypeScript.
 
 ```
 my-neon-lib
@@ -67,24 +69,40 @@ my-neon-lib
 └── README.md
 ```
 
-This RFC proposes collapsing this space of possibilities to **eliminate confusion and cognitive overhead** associated with knowing which directory a user must be in and which tool applies where. The new layout makes a Neon project **_both_ an npm package _and_ a Rust crate**. The `neon` tool _replaces_ the `cargo` executable entirely in a Neon programmer's workflow; that is, `cargo` should never be used in a Neon project. Moreover, `neon` should work regardless of what subdirectory of the project a user happens to be in (just as Cargo works today).
+This RFC proposes keeping the directory hierarchy similar, but adds a `Cargo.toml` manifest to the root directory. The root manifest contains a `[workspace]` directive, which makes the top-level directory into a Rust [_virtual workspace_](http://doc.crates.io/manifest.html#virtual-manifest). This means that Rust tooling can be used in the project root directory, allowing programmers to avoid having to change directories to do different actions.
+
+ The `neon` tool _replaces_ the `cargo` executable entirely in a Neon programmer's workflow; that is, `cargo` should never be used in a Neon project. The need for the wrapper tool is a result of `cargo` not having enough extensibility hooks for all of Neon's needs, but we will engage with the Cargo team to work towards a future where we can eliminate the `neon` wrapper and Neon programmers can directly use `cargo` with a Neon plugin. Importantly, the use of a virtual workspace means that not only can Neon programmers use the `neon` command-line tool from the project root directory today, but in the future they will be able to call `cargo` from the project root as well.
+
+To clarify the role that the `native/` directory plays, this RFC proposes renaming it in the project structure to `crate/`. This comes closer to the Rust convention of having multiple sub-crates of a workspace live in a `crates/` directory, but the singular `crate/` nudges programmers to keep the Rust internals of a Neon package small (and push additional Rust logic out into other repositories with separate crates).
+
+The mental model for Neon programmers becomes clear and easy to learn:
+
+- A Neon project is, to the external world, an npm package.
+- A Neon project is also internally a Rust workspace.
+- A Neon project contains a Rust crate in its internal implementation, residing in the `crate/` directory.
+- The workflow tool for developing and deploying the JS package is `npm` (or `yarn`), with the conventional `npm install` being the only step required for a complete build.
+- The workflow tool for developing the Rust workspace is `neon`, which works just like `cargo` but for Neon packages. (Eventually this will be replaced with just `cargo`.)
+
+The resulting project layout looks like this:
 
 ```
 my-neon-lib
-├── addon.node
-├── build.rs
-├── Cargo.toml
 ├── lib
 │   └── index.js
+├── crate
+│   ├── build.rs
+│   ├── Cargo.toml
+│   ├── index.node
+│   └── src
+│       └── lib.rs
+├── Cargo.toml
 ├── package.json
-├── README.md
-└── src
-    └── lib.rs
+└── README.md
 ```
 
 ## Redesigned CLI
 
-The long-term goal of the `neon` CLI should be to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. When Cargo supports the necessary extension hooks to implement this functionality as a plugin, we can deprecate `neon` and move to `cargo` proper.
+As described above, the long-term goal of the `neon` CLI is to go away and be replaced by a pure `cargo` plugin, allowing developers to work entirely with a cargo-based workflow. When Cargo supports the necessary extension hooks to implement this functionality as a plugin, we can deprecate `neon` and move to `cargo` proper. In the meantime, `neon` should be as similar in UI and behavior to `cargo` as possible, to ensure a smooth transition. (In particular, it's important to have a plausible path to the `cargo`-based workflows being not only functionally equivalent, but _equally or more ergonomic_ to `neon`. Otherwise, developers will not be willing to make the transition.)
 
 ### `neon new`
 
@@ -159,20 +177,40 @@ The CLI documentation for the `neon` CLI should mostly be taken from the `cargo`
 
 Wrappers are a maintenance burden since they have to keep up with the tool they wrap. They can also lead to confusing or inconsistent error messages. We should pay close attention to error handling to try to make this manageable. This is also somewhat mitigated by explaining `neon` as a thin wrapper, so the user's mental model is "Cargo with the right settings for Neon" instead of a distinct abstraction layer. And of course eventually we want to eliminate this, assuming Cargo will provide the right extension hooks. This seems to be a pretty high priority for the Rust tools subteam so I'm cautiously optimistic.
 
-Some may feel the merged project layout will feel messy or confusing, as opposed to the current cordoning off of the Rust directory under `native/`. However, I think the benefit of decreased decisions and mental context outweighs the messiness, and the most important hygiene constraint--source files kept in separate subdirectories--is still met.
-
 # Rationale and alternatives
 [alternatives]: #alternatives
 
 We could wait for Cargo to get all the extension hooks necessary, but in the meantime multiple users report mental model confusion about when to use `neon` and when to use `cargo`.
 
-We could keep the existing project layout, but this adds mental overhead. Programmers have to move around directories to look at the project configuration, and possibly also can only use `neon` when sitting within the `native/` subdirectory. (We could make `neon` work from any subdirectory of the project root, but might be slightly more confusing.) In effect, the mental model is "this project is both an npm package and a Rust crate", which eliminates any doubt about whether Rust operations are applicable in any given context.
+We could lift the Rust crate out into the project root directory in order to make Rust tooling accessible from the project root. But this leads to a messier project structure and creates a name conflict between different ecosystems' uses of the `src/` directory convention. Luckily, Rust's virtual workspaces were invented precisely for this purpose of using Rust tooling in a root directory that is not itself a Rust crate but contains 1 or more crates in subdirectories.
 
 We could change the name of the CLI tool to something closer to `cargo`, such as `vargo`, to make it clearer to users that the mental model is a slight modification of `cargo`. However, the name `neon` is already so natural that it would actually likely make anything else more confusing, not to mention less aesthetically pleasing.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- What about transpiled languages (e.g. TypeScript) that want to use `src/` for the un-transpiled source?
+Where should the source code for the convenience launcher for `neon run` live? I see three options:
+- In the root workspace project (drawback: requires a source directory to the root project directory)?
+- In the single crate (drawback: pollutes the crate with some boilerplate and a tiny bit of library bloat)?
+- In an additional crate (drawback: requires a multiple-crate `crates/` directory)?
+I'm pretty confident the first option is the worst: the whole point was to avoid mixing Rust and JS in the root directory. I am leaning towards preferring the middle option, since we can abstract out most of it into a helper crate, so the resulting extra lines in the manifest would just be:
+```toml
+[[bin]]
+name = "run"
+path = "src/run.rs"
+
+[dependencies]
+neon-run = "1.0"
+```
+and the resulting `src/run.rs` would just be:
+```rust
+extern crate neon_run;
+
+use neon_run::run;
+
+fn main() { run(); }
+```
+And this means we can continue to nudge Neon programmers away from large project repos with many Rust crates. On the other hand, I haven't yet completely convinced myself that Neon monorepos are so bad, so I might also be convinced that the third option is better.
+
 - Unit tests (see `neon test` above)
 - Benchmarks (see `neon bench` above)
