@@ -1,13 +1,13 @@
 * Feature Name: task_api_expansion
 * Start Date: 2018/01/31
-* RFC PR: (leave this empty)
-* Neon Issue: (leave this empty)
+* RFC PR: https://github.com/neon-bindings/neon/pull/303
+* Neon Issue: https://github.com/neon-bindings/neon/issues/228
 
 # Summary
 
 [summary]: #summary
 
-This RFC expands the Task API to support the needs of long-running tasks in a Rust thread. New traits allow for single-shot, observable, and bidirectional tasks. The previous `Task` trait remains as `NodeThreadPoolTask` for consumers who wish to continue running tasks on Node's `libuv` thread pool.
+This RFC expands the Task API and adds a Worker API to support the needs of long-running work in a Rust thread. The expanded Task trait maintains support for running work on the `libuv` thread pool.
 
 # Motivation
 
@@ -15,7 +15,7 @@ This RFC expands the Task API to support the needs of long-running tasks in a Ru
 
 The current `Task` trait has two limitations that render long-running async Rust work impractical:
 
-* Tasks run in the Node thread pool using `uv_queue_work`. This means that long-running tasks can clog the thread pool, potentially blocking Node's filesystem and compression operations.
+* Tasks run in the Node thread pool using `uv_queue_work`. This means that long-running tasks can clog the thread pool, potentially blocking Node's filesystem and compression operations. See the Node docs [here](https://nodejs.org/en/docs/guides/dont-block-the-event-loop/#don-t-block-the-worker-pool) for common cases that block the worker pool.
 * Tasks can only present a single completion value to the calling Javascript. `Task` doesn't support intermediate events or receiving events from Javascript.
 
 Adding new APIs to remove these limitations allows Neon to support new use cases:
@@ -33,99 +33,110 @@ Neon includes three traits for defining and running asynchronous tasks in a Rust
 
 ## Task
 
-The `Task` trait defines a "single-shot" task: a short, asynchronous piece of work run in a Rust thread that terminates after providing a single completion value or error. It's analogous to a Node callback API (`runTask((err, value) => {})`). Implementing the trait involves defining the work in `perform` and defining how its results map to Javascript values in `error` and `complete`.
+The `Task` trait defines a "single-shot" task: a short, asynchronous piece of work run in either a Rust thread or the `libuv` thread pool that terminates after providing a single completion value or error. It's analogous to a Node callback API (`runTask((err, result) => {})`). Implementing the trait involves defining the work in `perform` and defining how its results map to Javascript results or errors in `complete`.
 
 ```rust
-pub trait Task: Send + Sync + Sized + 'static {
+pub trait Task: Send + Sized + 'static {
     /// The type of the completion value returned from `perform`.
     /// This type must be thread-safe, as the Rust thread passes it
     /// back to the main thread to convert into Javascript values.
-    type Complete: Send + Sync;
-
+    type Complete: Send;
     /// The type of the error value returned from `perform`.
     /// This type must be thread-safe, as the Rust thread passes it
     /// back to the main thread to convert into Javascript values.
-    type Error: Send + Sync + Error;
-
+    type Error: Send + Error;
     /// The Javascript type of the value provided to the second parameter
     /// of the Javascript callback.
     type JsComplete: Value;
-
-    /// Performs the task on a Rust thread, producing either a completion value or an error.
+    /// Performs work without blocking the event loop, producing either a
+    /// completion value or an error.
     fn perform(&self) -> Result<Self::Complete, Self::Error>;
-
     /// Transform the `Complete` value returned from `perform` into a Javascript value
-    /// to be passed to the second parameter of the asynchronous callback.
-    /// This method runs on the main thread event loop an indeterminate amount of time
-    /// after finishing `perform`.
+    /// to pass to the provided callback. This method runs on the  event loop thread an
+    /// indeterminate amount of time after finishing `perform`.
+    fn complete<'a, S: Scope<'a>>(
+        &'a self,
+        scope: &'a mut S,
+        result: Result<&Self::Complete, &Self::Error>,
+    ) -> JsResult<Self::JsComplete>;
+}
+```
+
+The Task trait provides two methods with default implementations, `run` and `run_uv`:
+
+```rust
+fn run<'a, T: Scope<'a>>(
+    self,
+    scope: &'a mut T,
+    callback: Handle<JsFunction>,
+) -> JsResult<'a, JsFunction>;
+
+fn run_uv(self, callback: Handle<JsFunction>);
+```
+
+`run` spawns the task on a Rust thread, while `run_uv` runs it on the `libuv` thread pool. Long-running work in `run_uv` may block Node's thread pool; if in doubt, use `run`. Both take a callback with signature `function(err, result)`. Tasks terminate on error.
+
+### Example
+
+```rust
+extern crate neon;
+
+use std::error::Error;
+use std::fmt;
+
+use neon::concurrent::Task;
+use neon::js::{JsFunction, JsNumber, JsUndefined};
+use neon::scope::Scope;
+use neon::vm::{Call, JsResult};
+
+#[derive(Debug)]
+struct TaskError;
+
+impl Error for TaskError {
+    fn description(&self) -> &str {
+        "Oops"
+    }
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Oops")
+    }
+}
+
+#[derive(Debug)]
+struct SuccessTask;
+
+impl Task for SuccessTask {
+    type Complete = i32;
+    type Error = TaskError;
+    type JsComplete = JsNumber;
+
+    fn perform(&self) -> Result<Self::Complete, Self::Error> {
+        Ok(10 + 7)
+    }
+
     fn complete<'a, T: Scope<'a>>(
         &'a self,
         scope: &'a mut T,
-        result: &Self::Complete,
-    ) -> JsResult<Self::JsComplete>;
-
-    /// Transform the `Error` value returned from `perform` into a Javascript value
-    /// to be passed to the first parameter of the asynchronous callback.
-    /// This method runs on the main thread event loop an indeterminate amount of time
-    /// after finishing `perform`.
-    fn error<'a, T: Scope<'a>>(
-        &'a self,
-        scope: &'a mut T,
-        error: &Self::Error,
-    ) -> JsResult<JsError>;
+        result: Result<&Self::Complete, &Self::Error>,
+    ) -> JsResult<Self::JsComplete> {
+        Ok(JsNumber::new(scope, *result.unwrap() as f64))
+    }
 }
-```
 
-### Example
-
-```rust
-
-```
-
-## ObservableTask
-
-The `ObservableTask` trait is a superset of the `Task` trait that supports emitting intermediate events. It's analogous to the `subscribe(onNext, onError, onComplete)` method of [common `Observable` types](https://github.com/tc39/proposal-observable#observable). Implementing the trait is the same as implementing `Task`, but with a few additions and a different `perform` method:
-
-```rust
-pub trait ObservableTask: Send + Sync + Sized + 'static {
-    /// Methods and types shared with `Task` are omitted.
-
-    /// Of note: in this trait, the `complete` and `error` methods provide values to
-    /// `onComplete` and `onError` respectively, rather than the two parameters of
-    /// a single Node-style callback.
-
-    /// The type of an intermediate value emitted from `perform`.
-    /// This type must be thread-safe, as the Rust thread passes it
-    /// back to the main thread to convert into Javascript values.
-    type Next: Send + Sync;
-
-    /// The Javascript type of the value provided to the Javascript `onNext` callback.
-    type JsNext: Value;
-
-    /// Performs the task on a Rust thread. Uses the `emit` function to send errors,
-    /// intermediate values, and completion signals to Javascript. Note that the
-    /// task will hang indefinitely until calling `emit` with a `Message::Complete`.
-    fn perform<N: Fn(Message<Self::Next, Self::Error, Self::Complete>)>(&self, emit: N);
-
-    /// Transform the `Complete` value emitted from `perform` into a Javascript value
-    /// to be passed to the `onNext` callback. This method runs on the main thread
-    /// event loop an indeterminate amount of time  after finishing `perform`.
-    fn next<'a, T: Scope<'a>>(
-        &'a self,
-        scope: &'a mut T,
-        value: &Self::Next,
-    ) -> JsResult<Self::JsNext>;
+pub fn perform_async_task(call: Call) -> JsResult<JsUndefined> {
+    let callback = call.arguments
+        .require(call.scope, 0)?
+        .check::<JsFunction>()?;
+    let _ = SuccessTask.run(call.scope, callback);
+    Ok(JsUndefined::new())
 }
-```
-
-### Example
-
-```rust
-
 ```
 
 ## WorkerTask
 
+*TODO*
 The `WorkerTask` trait is a superset of the `ObservableTask` trait that allows Javascript to send messages to a running task. `WorkerTask`s enable bidirectional communication between Node and long-running Rust daemons. Its `perform` method returns a Javascript function that the user can call to send values to the task. Implementing the trait is the same as implementing `ObservableTask`, but with a few additions and an augmented `perform` method:
 
 ```rust
