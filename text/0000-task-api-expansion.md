@@ -291,34 +291,103 @@ send("Goodbye");
 
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+To run asynchronous code in a Rust thread without blocking the event loop thread, we use `libuv`'s async handles (`uv_async_t` in conjunction with `uv_async_send`). To start using `libuv` in an ergonomic way, we need bindings!
 
-* Its interaction with other features is clear.
-* It is reasonably clear how the feature would be implemented.
-* Corner cases are dissected by example.
+## `libuv` bindings
 
-This section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+`bindgen` to the rescue! To generate minimal bindings for this implementation run the following (assuming `nvm`):
+
+```bash
+bindgen ~/.nvm/versions/node/v8.11.1/include/node/uv.h \
+    -o src/uv/pre-node-10.rs \
+    --with-derive-default \
+    --whitelist-function uv_async_init \
+    --whitelist-function uv_async_send \
+    --whitelist-type uv_async_t \
+    --whitelist-function uv_close \
+    --whitelist-function uv_default_loop
+```
+
+Note the `pre-node-10` naming scheme above. Node 10's `libuv` version isn't ABI compatible `libuv` versions in Node 6-8:
+
+| Node (latest) | libuv     | ABI backwards compatible? |
+| ---------- | ------ | -------------------- |
+| 6               | 1.16.1  | Yes                            |
+| 8               | 1.19.1  | Yes                            |
+| 10              | 1.20.1  | **NO**                       |
+
+(See the [`abi-laboratory`](https://abi-laboratory.pro/tracker/timeline/libuv/) report for full ABI history.)
+
+To support the latest and all LTS version of Node, we generate two sets of bindings: one for Node 6-8, and one for Node 10. For Node 6-8, run `bindgen` on either the Node 6 or 8 headers (they're ABI compatible). For Node 10, run `bindgen` on the Node 10 headers (output file `node_10.rs`).
+
+To compile with the correct bindings, we add a step to the build script that snags the current Node version from `npm configure` and enable either the new `pre_node_10` (default) or `node_10` Cargo feature.
+
+After creating the bindings, we add an `AsyncHandle` struct to correctly allocate and drop resources. `AsyncHandle` also contains a method, `wake_event_loop`, that calls a Rust closure on the main thread using `uv_async_send` under the hood.
+
+## Implementing `Worker::spawn`
+
+Since we can define `Task` as an implementation of `Worker`, our first task (heh) is to add a default implementation, `Worker::spawn`, that interacts with `libuv` and facilitates running code on the Rust thread, waking up the event loop, and transforming results into Javascript values.
+
+In `Worker::spawn`, we create the following resources:
+
+* A persistent handle for the provided callback. We use a small wrapper in `neon-runtime`, `AsyncCallback`, to handle construction, destruction, and execution of this callback.
+* An `AsyncHandle` that lets us wake the event loop up after performing work in a Rust thread.
+* A concurrent queue for managing `libuv`'s coalesced `uv_async_send` calls (see the [`libuv` docs](http://docs.libuv.org/en/v1.x/async.html)).
+* A `std::sync::mpsc` channel to notify the Rust thread that the main thread sent a worker completion event to Javascript. This is necessary to keep resources alive on the Rust thread while waiting for the main thread to stop using them.
+* A `std::sync::mpsc` channel to send and receive events between the worker and Javascript.
+
+We then spawn a Rust thread and run `Worker::perform` in it, passing it an emitter callback and the event channel receiver. Immediately after, we return a `JsFunction` with a boxed Rust closure that sends messages to `Worker::perform`'s event channel receiver.
+
+The emitter callback we pass to `Worker::perform` is where the magic happens. Each time the user's `Worker::perform` calls the callback with an event, completion value, or error, the callback:
+
+* Pushes the value onto the queue.
+* Wakes up the event loop.
+* For each value in the queue:
+    * Create a new `RootScope`.
+    * If the value is an event:
+        * Convert the event into a Javascript value by calling `Worker::event`.
+        * Call the persistent callback with the event as the third parameter.
+    * If the value is an error:
+        * Convert the error into a Javascript value by calling `Worker::error`.
+        * Call the persistent callback with the error as the first parameter.
+    * If the value is a completion value:
+        * Convert the value into a Javascript value by calling `Worker::complete`.
+        * Call the persistent callback with the value as the second parameter.
+        * Destroy the persistent callback.
+        * Send a completion message to the completion receiver in the Rust thread.
+
+Once the completion receiver in the Rust thread receives a message, the thread dies and the worker is terminated.
+
+## Implementing `Task::run`
+
+`Task` is a convenience implementation of `Worker`, so it needs no new logic. `Task` uses the unit type or an equivalent empty type for associated types it doesn't care about (`Event`, `IncomingEvent`, `IncomingEventError`, and `JsEvent`) and returns simple wrapper `Ok`s around these types for methods it doesn't care about (`event`, `incoming_event`).
+
+## Implementing `Task::run_uv`
+
+`Task::run_uv` is a simple migration from the previous `Task` API using the Node thread pool.
 
 # Drawbacks
 
 [drawbacks]: #drawbacks
 
-Why should we _not_ do this?
+* The implementation is complex and depends on knowledge of `libuv` arcana and quirks.
+* Introduces a dependency on `crossbeam` that otherwise has no place in the project.
+* Adds implementation-specific Cargo features that depend on a new build step.
+* Adds a significant amount of unsafe code that expands the task of making Neon exception-safe.
 
 # Rationale and alternatives
 
 [alternatives]: #alternatives
 
-* Why is this design the best in the space of possible designs?
-* What other designs have been considered and what is the rationale for not choosing them?
-* What is the impact of not doing this?
+* Higher level than manually handling `Persistent`s and `uv_async_send`.
+* Provides a simple API for the common case (`Task`) and a powerful API for complex cases (`Worker`).
+* `Worker` provides primitives instead of opinions to give the user flexibility.
+* Not adding `Task` means long-running work the existing API can block the Node thread pool.
+* Not adding `Worker` means users with streaming data and long-running tasks may abandon Neon for C++ addons.
 
 # Unresolved questions
 
 [unresolved]: #unresolved-questions
 
-* Does Node or `libuv` detect blocked threads in the pool and automatically spin up new ones? This would mitigate the `uv_queue_work` problem, although observable/bidirectional tasks still require `uv_async_send`.
-
-* What parts of the design do you expect to resolve through the RFC process before this gets merged?
-* What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-* What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+* Can we avoid transmutes between `libuv` handle type structs? e.g. casting `uv_async_t` to `uv_handle_t`.
+* Out of scope: is it possible to implement a Tokio `Executor` for the `libuv` event loop? If so, we can implement `Future` for `Task` and `Stream` for `Worker` to better fit into Rust's async ecosystem.
