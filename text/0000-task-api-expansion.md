@@ -29,19 +29,23 @@ Adding new APIs to remove these limitations allows Neon to support new use cases
 
 [guide-level-explanation]: #guide-level-explanation
 
-Neon includes three traits for defining and running asynchronous tasks in a Rust thread. Here's what each trait can do and how to use them, in order of complexity:
+Neon includes two Traits for running asynchronous work: `Task` and `Worker`.
+
+`Task` is a convenience implementation of `Worker` that makes single-shot tasks easy to run and define. You can run a `Task` in either a Rust thread or the `libuv` thread pool. Tasks terminate after providing a either a completion value or error.
+
+`Worker` gives you the power to define most asynchronous patterns–you can emit intermediate events and send messages to a `Worker` from Javascript without blocking the event loop. Within a `Worker`'s `perform` method, you're free to stream data or even create your own event loop that performs work in response to Javascript messages.
 
 ## Task
 
-The `Task` trait defines a "single-shot" task: a short, asynchronous piece of work run in either a Rust thread or the `libuv` thread pool that terminates after providing a single completion value or error. It's analogous to a Node callback API (`runTask((err, result) => {})`). Implementing the trait involves defining the work in `perform` and defining how its results map to Javascript results or errors in `complete`.
+To implement the trait, define your work in `perform` and map its results to Javascript values in `complete`.
 
 ```rust
 pub trait Task: Send + Sized + 'static {
-    /// The type of the completion value returned from `perform`.
+    /// The type of the completion value `perform` returns.
     /// This type must be thread-safe, as the Rust thread passes it
     /// back to the main thread to convert into Javascript values.
     type Complete: Send;
-    /// The type of the error value returned from `perform`.
+    /// The type of the error value `perform` returns.
     /// This type must be thread-safe, as the Rust thread passes it
     /// back to the main thread to convert into Javascript values.
     type Error: Send + Error;
@@ -51,9 +55,10 @@ pub trait Task: Send + Sized + 'static {
     /// Performs work without blocking the event loop, producing either a
     /// completion value or an error.
     fn perform(&self) -> Result<Self::Complete, Self::Error>;
-    /// Transform the `Complete` value returned from `perform` into a Javascript value
-    /// to pass to the provided callback. This method runs on the  event loop thread an
-    /// indeterminate amount of time after finishing `perform`.
+    /// Transform the `Complete` value returned from `perform` into a
+    /// Javascript value to pass to the provided callback. This method runs
+    /// on the  event loop thread an indeterminate amount of time after
+    /// finishing `perform`.
     fn complete<'a, S: Scope<'a>>(
         &'a self,
         scope: &'a mut S,
@@ -62,7 +67,7 @@ pub trait Task: Send + Sized + 'static {
 }
 ```
 
-The Task trait provides two methods with default implementations, `run` and `run_uv`:
+The `Task` trait provides two methods with default implementations, `run` and `run_uv`:
 
 ```rust
 fn run<'a, T: Scope<'a>>(
@@ -134,46 +139,152 @@ pub fn perform_async_task(call: Call) -> JsResult<JsUndefined> {
 }
 ```
 
-## WorkerTask
+## Worker
 
-*TODO*
-The `WorkerTask` trait is a superset of the `ObservableTask` trait that allows Javascript to send messages to a running task. `WorkerTask`s enable bidirectional communication between Node and long-running Rust daemons. Its `perform` method returns a Javascript function that the user can call to send values to the task. Implementing the trait is the same as implementing `ObservableTask`, but with a few additions and an augmented `perform` method:
+Implementing `Worker` is similar to implementing `Task`–define your work and transform its Rust results into Javascript values–but requires extra methods to handle incoming and outgoing events.
 
 ```rust
-pub trait ObservableTask: Send + Sync + Sized + 'static {
-    /// Methods and types shared with `ObservableTask` are omitted.
-
-    /// The type of a Rust value to send to the task.
+pub trait Worker: Send + Sized + 'static {
+    /// The type of the completion value that `perform` emits in its callback.
     /// This type must be thread-safe, as the Rust thread passes it
-    /// from the main thread to the task thread.
-    type Incoming: Send + Sync;
-
-    /// An `Error` type representing an argument conversion failure in `on_next`.
-    /// The Javascript sender function will throw a `JsError` with its `description()'.
-    type IncomingError: Error;
-
-    /// On calling the sender function from Javascript, convert its arguments
-    /// into an `Incoming` value that the Rust thread can read and interact with.
-    fn on_next<'a>(call: Call<'a>) -> Result<Self::Incoming, Self::IncomingError>;
-
-    /// Performs the task on a Rust thread. Keeps the `emit` argument from
-    /// `ObservableTask`, with an additional `receiver` argument that ingests
-    /// messages from Javascript via an `std::sync::mpsc::Receiver`.
-    /// You can do anything with this receiver, e.g wait to start until
-    /// receiving a message or wait for messages in a loop and pattern
-    /// match on their types.
-    fn perform<N: Fn(Message<Self::Next, Self::Error, Self::Complete>)>(
-        &self,
-        emit: N,
-        receiver: Receiver<Self::Incoming>,
-    );
+    /// back to the main thread to convert into Javascript values.
+    type Complete: Send;
+    /// The type of the error value `perform` emits in its callback.
+    /// This type must be thread-safe, as the Rust thread passes it
+    /// back to the main thread to convert into Javascript values.
+    type Error: Send + Error;
+    /// The type of all event values `perform` emits in its callback.
+    /// This type must be thread-safe, as the Rust thread passes it
+    /// back to the main thread to convert into Javascript values.
+    type Event: Send;
+    /// The type of all event values Javascript passes to the worker.
+    /// This is the _Rust_ type, transformed from the `JsEvent` type
+    /// in the `on_incoming_event` method.
+    /// This type must be thread-safe, as the Rust thread passes it
+    /// back to the main thread to convert into Javascript values.
+    type IncomingEvent: Send;
+    /// The type of all event values Javascript passes to the worker.
+    /// This is the _Rust_ type that represents a failure  to transform
+    /// the `JsEvent` type into an `IncomingEvent` type in the
+    /// `on_incoming_event` method.
+    /// This type must be thread-safe, as the Rust thread passes it
+    /// back to the main thread to convert into Javascript values.
+    type IncomingEventError: Error + Sized;
+    /// The Javascript type of the completion value. The worker calls
+    /// its callback with this value as the second parameter.
+    type JsComplete: Value;
+    /// The Javascript type of the event value. The worker calls its
+    /// callback with this value as the third parameter.
+    type JsEvent: Value;
+    /// Transform the `Complete` value emitted from `perform` into a
+    /// Javascript value to pass to the provided callback. This method runs
+    /// on the  event loop thread an indeterminate amount of time after
+    /// finishing `perform`.
+    fn complete<'a, T: Scope<'a>>(
+        &'a self,
+        scope: &'a mut T,
+        result: Result<&Self::Complete, &Self::Error>,
+    ) -> JsResult<Self::JsComplete>;
+    /// Transform the `Event` value emitted from `perform` into a
+    /// Javascript value to pass to the provided callback. This method runs
+    /// on the  event loop thread an indeterminate amount of time after
+    /// finishing `perform`.
+    fn event<'a, T: Scope<'a>>(
+        &'a self,
+        scope: &'a mut T,
+        value: &Self::Event,
+    ) -> JsResult<Self::JsEvent>;
+    /// Transform an incoming Javascript value into a Rust value.
+    fn on_incoming_event<'a>(call: Call<'a>) -> Result<Self::IncomingEvent, Self::IncomingEventError>;
 }
 ```
 
 ### Example
 
 ```rust
+#[derive(Debug)]
+struct SuccessWorker;
 
+impl Worker for SuccessWorker {
+    type Complete = String;
+    type Error = TaskError;
+    type Event = String;
+    type IncomingEvent = String;
+    type IncomingEventError = TaskError;
+
+    type JsComplete = JsString;
+    type JsEvent = JsString;
+
+    fn perform<N: FnMut(Message<Self::Event, Self::Error, Self::Complete>)>(
+        &self,
+        mut emit: N,
+        receiver: Receiver<Self::IncomingEvent>,
+    ) {
+        let incoming = receiver.recv().unwrap();
+        let hello = String::from("Hello");
+        let world = String::from("World");
+
+        emit(Message::Event(hello));
+        emit(Message::Event(world));
+        emit(Message::Complete(incoming))
+    }
+
+    fn on_incoming_event<'a>(
+        call: Call<'a>,
+    ) -> Result<Self::IncomingEvent, Self::IncomingEventError> {
+        call.arguments
+            .require(call.scope, 0)
+            .and_then(|arg| arg.check::<JsString>())
+            .and_then(|string| Ok(string.value()))
+            .or_else(|_| Err(TaskError {}))
+    }
+
+    fn event<'a, T: Scope<'a>>(
+        &'a self,
+        scope: &'a mut T,
+        value: &Self::Event,
+    ) -> JsResult<Self::JsEvent> {
+        JsString::new_or_throw(scope, value)
+    }
+
+    fn complete<'a, T: Scope<'a>>(
+        &'a self,
+        scope: &'a mut T,
+        result: Result<&Self::Complete, &Self::Error>,
+    ) -> JsResult<Self::JsComplete> {
+        match result {
+            Err(e) => JsError::throw(Kind::Error, e.description()),
+            Ok(value) => JsString::new_or_throw(scope, value),
+        }
+    }
+}
+
+pub fn create_success_worker(call: Call) -> JsResult<JsFunction> {
+    let callback = call.arguments
+        .require(call.scope, 0)?
+        .check::<JsFunction>()?;
+    SuccessWorker.spawn(call.scope, callback)
+}
+```
+
+In your Javascript code:
+
+```js
+const send = addon.create_success_worker((err, complete, event) => {
+  // Workers don't terminate on errors–we want to be able to emit
+  // multiple non-fatal errors, especially for long-running daemons.
+  if (err) { console.error(err); }
+  if (event) { 
+    console.log(event);
+  }
+  if (complete) {
+    console.log(complete)
+  }
+});
+
+// You can receive this value in `perform`'s `receiver` channel!
+send("Goodbye");
+}
 ```
 
 # Reference-level explanation
