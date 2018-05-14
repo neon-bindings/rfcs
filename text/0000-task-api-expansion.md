@@ -7,7 +7,7 @@
 
 [summary]: #summary
 
-This RFC expands the Task API and adds a Worker API to support the needs of long-running work in a Rust thread. The expanded Task trait maintains support for running work on the `libuv` thread pool.
+This RFC expands the Task API and adds a Worker API to support the needs of long-running async work in a Rust thread. The expanded Task trait maintains support for running work on the `libuv` thread pool.
 
 # Motivation
 
@@ -33,7 +33,7 @@ Neon includes two Traits for running asynchronous work: `Task` and `Worker`.
 
 `Task` is a convenience implementation of `Worker` that makes single-shot tasks easy to run and define. You can run a `Task` in either a Rust thread or the `libuv` thread pool. Tasks terminate after providing a either a completion value or error.
 
-`Worker` gives you the power to define most asynchronous patterns–you can emit intermediate events and send messages to a `Worker` from Javascript without blocking the event loop. Within a `Worker`'s `perform` method, you're free to stream data or even create your own event loop that performs work in response to Javascript messages.
+`Worker` gives you full control of asynchronous work–you can emit intermediate events and send messages to a `Worker` from Javascript without blocking the event loop. Within a `Worker`'s `perform` method, you're free to stream data or even create your own event loop that performs work in response to Javascript messages.
 
 ## Task
 
@@ -202,6 +202,31 @@ pub trait Worker: Send + Sized + 'static {
 ### Example
 
 ```rust
+extern crate neon;
+
+use std::error::Error;
+use std::fmt;
+
+use neon::concurrent::{Worker, Message};
+use neon::js::{JsFunction, JsNumber, JsUndefined};
+use neon::scope::Scope;
+use neon::vm::{Call, JsResult};
+
+#[derive(Debug)]
+struct TaskError;
+
+impl Error for TaskError {
+    fn description(&self) -> &str {
+        "Oops"
+    }
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Oops")
+    }
+}
+
 #[derive(Debug)]
 struct SuccessWorker;
 
@@ -284,7 +309,6 @@ const send = addon.create_success_worker((err, complete, event) => {
 
 // You can receive this value in `perform`'s `receiver` channel!
 send("Goodbye");
-}
 ```
 
 # Reference-level explanation
@@ -295,7 +319,7 @@ To run asynchronous code in a Rust thread without blocking the event loop thread
 
 ## `libuv` bindings
 
-`bindgen` to the rescue! To generate minimal bindings for this implementation run the following (assuming `nvm`):
+`bindgen` to the rescue! To generate minimal bindings for this implementation, run the following (assuming `nvm`):
 
 ```bash
 bindgen ~/.nvm/versions/node/v8.11.1/include/node/uv.h \
@@ -308,7 +332,7 @@ bindgen ~/.nvm/versions/node/v8.11.1/include/node/uv.h \
     --whitelist-function uv_default_loop
 ```
 
-Note the `pre-node-10` naming scheme above. Node 10's `libuv` version isn't ABI compatible `libuv` versions in Node 6-8:
+Note the `pre-node-10` naming scheme above. Node 10's `libuv` version isn't ABI compatible with the `libuv` versions in Node 6-8:
 
 | Node (latest) | libuv     | ABI backwards compatible? |
 | ---------- | ------ | -------------------- |
@@ -318,7 +342,7 @@ Note the `pre-node-10` naming scheme above. Node 10's `libuv` version isn't ABI 
 
 (See the [`abi-laboratory`](https://abi-laboratory.pro/tracker/timeline/libuv/) report for full ABI history.)
 
-To support the latest and all LTS version of Node, we generate two sets of bindings: one for Node 6-8, and one for Node 10. For Node 6-8, run `bindgen` on either the Node 6 or 8 headers (they're ABI compatible). For Node 10, run `bindgen` on the Node 10 headers (output file `node_10.rs`).
+To support the latest and all LTS versions of Node, we generate two sets of bindings: one for Node 6-8, and one for Node 10. For Node 6-8, run `bindgen` on either the Node 6 or 8 headers (they're ABI compatible). For Node 10, run `bindgen` on the Node 10 headers (output file `node_10.rs`).
 
 To compile with the correct bindings, we add a step to the build script that snags the current Node version from `npm configure` and enable either the new `pre_node_10` (default) or `node_10` Cargo feature.
 
@@ -326,14 +350,14 @@ After creating the bindings, we add an `AsyncHandle` struct to correctly allocat
 
 ## Implementing `Worker::spawn`
 
-Since we can define `Task` as an implementation of `Worker`, our first task (heh) is to add a default implementation, `Worker::spawn`, that interacts with `libuv` and facilitates running code on the Rust thread, waking up the event loop, and transforming results into Javascript values.
+Since we can define `Task` as an implementation of `Worker`, our first task (heh) is to add a default implementation, `Worker::spawn`, that interacts with `libuv` to run code on the Rust thread, wake up the event loop, and transform results into Javascript values.
 
 In `Worker::spawn`, we create the following resources:
 
 * A persistent handle for the provided callback. We use a small wrapper in `neon-runtime`, `AsyncCallback`, to handle construction, destruction, and execution of this callback.
 * An `AsyncHandle` that lets us wake the event loop up after performing work in a Rust thread.
 * A concurrent queue for managing `libuv`'s coalesced `uv_async_send` calls (see the [`libuv` docs](http://docs.libuv.org/en/v1.x/async.html)).
-* A `std::sync::mpsc` channel to notify the Rust thread that the main thread sent a worker completion event to Javascript. This is necessary to keep resources alive on the Rust thread while waiting for the main thread to stop using them.
+* A `std::sync::mpsc` channel to notify the Rust thread that the main thread sent a worker completion event to Javascript. This keeps borrowed resources alive on the Rust thread while waiting for the main thread to stop using them.
 * A `std::sync::mpsc` channel to send and receive events between the worker and Javascript.
 
 We then spawn a Rust thread and run `Worker::perform` in it, passing it an emitter callback and the event channel receiver. Immediately after, we return a `JsFunction` with a boxed Rust closure that sends messages to `Worker::perform`'s event channel receiver.
