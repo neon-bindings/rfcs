@@ -200,6 +200,13 @@ impl<'a, T: This> CallContext<'a, T> {
 impl<'a, T: This> Context<'a> for CallContext<'a, T> { /* ... */ };
 ```
 
+There are two type shorthands:
+
+```rust
+type FunctionContext<'a> = CallContext<'a, JsObject>;
+type MethodContext<'a, T> = CallContext<'a, T>;
+```
+
 ### `ModuleContext`
 
 A `ModuleContext` is the execution context of the initialization of a native Neon module.
@@ -278,21 +285,6 @@ impl RefMut<T> {
     unsafe new(lock: &VmGuard, address: *const c_void, size: usize) -> Option<RefMut<T>>;
 }
 ```
-
-## Indexing into a `CallContext`
-
-We should experiment with making the `CallContext` type implement `Index`, to make it more convenient to access arguments:
-
-```rust
-impl<'a, T: This> Index<i32> for CallContext<'a, T> {
-    type Output = JsValue;
-    fn index(&self, i: i32) -> &JsValue {
-        &self.argument(i).unwrap()
-    }
-}
-```
-
-It’s an open question whether this works; it needs experimentation.
 
 # Critique
 [critique]: #critique
