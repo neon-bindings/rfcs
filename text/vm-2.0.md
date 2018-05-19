@@ -131,7 +131,7 @@ trait Context<'a> {
         where F: FnOnce(ExecuteContext<'b>) -> T;
     fn compute_scoped<'b, V, F>(&self, f: F) -> JsResult<'a, V>
         where V: Value,
-              F: FnOnce(ComputeContext<'b>) -> JsResult<'b, V>;
+              F: FnOnce(ComputeContext<'b, 'a>) -> JsResult<'b, V>;
 
     fn number(&mut self, f: f64) -> JsResult<'a, JsNumber>;
     fn boolean(&mut self, b: bool) -> JsResult<'a, JsBoolean>;
