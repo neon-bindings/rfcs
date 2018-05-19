@@ -15,7 +15,7 @@ This RFC proposes eliminating several of the distinct abstractions in the curren
 
 and collapsing them into a single `vm::Context` trait that represents a contextual view of the JavaScript virtual machine.
 
-Like today’s `Scope` trait, the `Context` trait encapsulates access to the memory management scope, so methods that interact with the GC require an argument with mutable access to a `Context`. For example, the current API requires passing an `&mut impl Scope<'_>` to a VM operation such as:
+Like today’s `Scope` trait, the `Context` trait encapsulates access to the memory management scope, so methods that interact with the GC require an argument with mutable access to a `Context`. For example, the current API requires passing a mutable reference to a scope to a VM operation such as:
 
 ```rust
 let foo = obj.get(call.scope, "foo")?;
@@ -27,7 +27,7 @@ With this RFC, a function call takes an owned implementation of `Context` and pa
 let foo = obj.get(&mut cx, "foo")?;
 ```
 
-This effectively raises the level of abstraction in the mental model of the Neon user: instead of thinking about `Scope` as a mechanism that cleverly encodes memory safety with Rust’s mutability rules, the user can simply think of it as **a representation of mutable access to the JS virtual machine**, where mutable access represents **modifying the state of the virtual machine**.
+This effectively raises the level of abstraction in the Neon mental model: instead of thinking about `Scope` as a mechanism that cleverly encodes memory safety with Rust’s mutability rules, we can think of a context as **a representation of mutable access to the JS virtual machine state** in some execution context.
 
 Here's an example using the new API:
 ```rust
