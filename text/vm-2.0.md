@@ -320,3 +320,4 @@ Finally, a convenience I abandoned:
 - Should there be any convenience APIs for common cases of `CallContext` argument extraction, like using `JsValue` as the return type, and converting to `JsString` via `to_js_string()`?
 - Is the type of `CallContext::callee` wrong? In particular, should it have static knowledge of the `this`-type?
 - When should the `this`-type be `JsObject` vs `JsValue`? In the prototype implementation there's some confusion about this currently, probably with some subtle bugs. (In particular, the macros use `CallContext<JsValue>` but `FunctionContext` is a shorthand for `CallContext<JsObject>`.) This is related to the `callee` question above, too.
+- Should we rename `*Context` to `*Cx` for brevity? For example, when writing a helper, you could write `fn helper<C: Cx>(cx: &mut C) { ... }`.
