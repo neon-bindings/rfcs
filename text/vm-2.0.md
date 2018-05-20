@@ -193,8 +193,8 @@ impl<'a, T: This> CallContext<'a, T> {
     fn len(&self) -> i32;
     fn argument_opt(&mut self, i: i32) -> Option<Handle<'a, JsValue>>;
     fn argument<V: Value>(&mut self, i: i32) -> JsResult<'a, V>;
-    fn this(&mut self) -> JsResult<'a, T>;
-    fn callee(&mut self) -> JsResult<'a, JsFunction>;
+    fn this(&mut self) -> Handle<'a, T>;
+    fn callee(&mut self) -> Handle<'a, JsFunction>;
 }
 
 impl<'a, T: This> Context<'a> for CallContext<'a, T> { /* ... */ };
