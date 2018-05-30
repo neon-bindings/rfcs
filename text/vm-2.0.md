@@ -127,6 +127,16 @@ The `Context` trait has the following signature:
 trait Context<'a> {
     fn lock(&self) -> &VmGuard;
 
+    fn borrow<'c, V, T, F>(&self, v: &'c Handle<V>, f: F) -> T
+        where V: Value,
+              &'c V: Borrow,
+              F: for<'b> FnOnce(Ref<'b, <&'c V as Borrow>::Target>) -> T;
+
+    fn borrow_mut<'c, V, T, F>(&self, v: &'c mut Handle<V>, f: F) -> T
+        where V: Value,
+              &'c mut V: BorrowMut,
+              F: for<'b> FnOnce(RefMut<'b, <&'c mut V as Borrow>::Target>) -> T;
+
     fn execute_scoped<'b, T, V, F>(&self, f: F) -> T
         where F: FnOnce(ExecuteContext<'b>) -> T;
     fn compute_scoped<'b, V, F>(&self, f: F) -> JsResult<'a, V>
@@ -143,6 +153,7 @@ trait Context<'a> {
     fn empty_array(&mut self) -> JsResult<'a, JsArray>;
 
     fn array_buffer(byte_len: u32) -> JsResult<'a, JsArrayBuffer>;
+    fn buffer(byte_len: u32) -> JsResult<'a, JsBuffer>;
 
     // future: 
     // fn function(&mut self, /* ??? */) -> JsResult<'a, JsFunction>;
@@ -157,6 +168,10 @@ trait Context<'a> {
 
 **cx.lock()**
 Freezes the VM by taking out a lock.
+
+**cx.borrow()**
+**cx.borrow_mut()**
+Convenience APIs for locking the VM and borrowing a single value.
 
 **cx.execute_scoped(|mut cx| { … })**
 Execute a callback with a new `Context` instance. Any locally allocated handles created during the body of the callback are only kept alive for the duration of the callback. This method is useful for executing code that may generate temporary data and allowing that temporary data to get freed by the JavaScript garbage collector, especially inside of a loop that may result in large amounts of temporary garbage.
@@ -304,7 +319,7 @@ let bar = cx.argument::<JsValue>(1)?.to_js_string(&mut cx)?;
 There are also a couple of pieces of the API where we have to consider an RAII approach versus a higher-order function (HOF) approach. So that leads to a couple more alternatives:
 
 - **RAII for `compute_scoped` and `execute_scoped`**: These operations need to be able to guarantee that the underlying `HandleScope` destructor runs at the end, and RAII destructors aren't guaranteed to run. Whenever you need a guarantee that a piece of code runs after a computation, you have to use a HOF. (This was the soundness hole discovered in the experimental RAII `thread::scoped` Rust API, and which led to the [scoped_threadpool](https://crates.io/crates/scoped_threadpool) crate, which uses a HOF instead.)
-- **Stick with HOF for locking**: Unlocking the VM isn't a safety concern, so having an RAII API seems nice and flexible. But it might still be good to offer a convenient shorthand API that borrows a single value with a callback.
+- **Stick with HOF for locking**: Unlocking the VM isn't a safety concern, so having an RAII API seems nice and flexible. But it adds more boilerplate, so I added HOF convenience forms, `Context::borrow()` and `Context::borrow_mut()` for the common case of borrowing a single value. This feels like a good tradeoff, since the most common case is just as convenient as before (and has a more intuitive API name than "`grab`"), and the uncommon case is more flexible and less confusing (grabbing multiple values in a tuple or a vector was much more awkward than RAII).
 
 A different question, relating to consistency of API return types:
 
