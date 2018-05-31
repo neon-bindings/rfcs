@@ -6,12 +6,12 @@
 # Summary
 [summary]: #summary
 
-This RFC proposes changing `JsArrayBuffer`'s implementation of [vm::Lock](https://api.neon-bindings.com/neon/vm/trait.lock) to expose a zero-cost `ArrayBufferData` type, which gives access to the underlying buffer data with all the view types of JavaScript's [typed arrays](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays).
+This RFC proposes changing `JsArrayBuffer`'s implementation of [vm::Lock](https://api.neon-bindings.com/neon/vm/trait.lock) to expose a zero-cost `BinaryData` type, which gives access to the buffer's underyling data with all the view types of JavaScript's [typed arrays](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays).
 
 # Motivation
 [motivation]: #motivation
 
-The `JsArrayBuffer` API currently gives direct access to a `CMutSlice<u8>`, but if you want to operate on the data at different primitive types, you have to use unsafe code to transmute the slice. Any time Neon users are tempted to use unsafe code we should make sure there are easier safe APIs available for them to use instead.
+The `JsArrayBuffer` and `JsBuffer` APIs currently give direct access to a `CMutSlice<u8>`, but if you want to operate on the data at different primitive types, you have to use unsafe code to transmute the slice. Any time Neon users are tempted to use unsafe code we should make sure there are easier safe APIs available for them to use instead.
 
 Moreover, the use of `CMutSlice` instead of Rust's built-in slice types turns out to have been unnecessary. Giving Rust programs direct access to native Rust slices means Neon programs can make use of any abstractions that operate on Rust slices.
 
@@ -26,28 +26,28 @@ let buffer: Handle<JsArrayBuffer> = x.check::<JsArrayBuffer>()?;
 
 ## Reading buffer data
 
-A `JsArrayBuffer` provides access to its internal buffer via the [`Lock::grab`](https://api.neon-bindings.com/neon/vm/trait.lock#method.grab) method. By calling the `grab` method with a callback, your code is given access to an `ArrayBufferData` struct. You can use this struct to get views over the buffer with different typed formats. For example, as a `u32` slice:
+A `JsArrayBuffer` provides access to its internal buffer via the [`Lock::grab`](https://api.neon-bindings.com/neon/vm/trait.lock#method.grab) method. By calling the `grab` method with a callback, your code is given access to a `BinaryData` struct. You can use this struct to get views over the buffer with different typed formats. For example, as a `u32` slice:
 
 ```rust
-let first: u32 = buffer.grab(|contents| {
-    contents.as_u32_slice()[0]
+let first: u32 = buffer.grab(|data| {
+    data.as_u32_slice()[0]
 });
 ```
 
 or an `f64` slice:
 
 ```rust
-let first: f64 = buffer.grab(|contents| {
-    contents.as_f64_slice()[0]
+let first: f64 = buffer.grab(|data| {
+    data.as_f64_slice()[0]
 });
 ```
 
 You can view the same buffer with multiple different view types:
 
 ```rust
-let (first: u32, second: u32, third: f64) = buffer.grab(|contents| {
-    let ints = contents.as_u32_slice();
-    let floats = contents.as_f64_slice();
+let (first: u32, second: u32, third: f64) = buffer.grab(|data| {
+    let ints = data.as_u32_slice();
+    let floats = data.as_f64_slice();
     (ints[0], ints[1], floats[1])
 });
 ```
@@ -65,23 +65,23 @@ then the first two cells are located at byte offsets 0 and 4 respectively and `u
 
 ## Writing to buffer data
 
-The `as_mut_XXX_slice()` methods provide mutable access to a buffer's cata.
+The `as_mut_XXX_slice()` methods provide mutable access to a buffer's data.
 
 ```rust
-buffer.grab(|mut contents| {
-    let mut ints = contents.as_mut_u32_slice();
+buffer.grab(|mut data| {
+    let mut ints = data.as_mut_u32_slice();
     ints[0] = 17;
     ints[1] = 42;
 });
 ```
 
-Notice how the callback's `contents` parameter is annotated as `mut` in order to allow mutable access to the data.
+Notice how the callback's `data` parameter is annotated as `mut` in order to allow mutable access to the data.
 
 Once again, here is an example of an `f64` slice:
 
 ```rust
-buffer.grab(|mut contents| {
-    let mut floats = contents.as_mut_f64_slice();
+buffer.grab(|mut data| {
+    let mut floats = data.as_mut_f64_slice();
     floats[0] = 1.23;
     floats[1] = 3.14;
 });
@@ -90,14 +90,14 @@ buffer.grab(|mut contents| {
 You can also extract differently-typed mutable slices, but as always with mutable references, they cannot coexist at the same time. So you have to create them in separate scopes:
 
 ```rust
-buffer.grab(|mut contents| {
+buffer.grab(|mut data| {
     {
-        let mut ints = contents.as_mut_u32_slice();
+        let mut ints = data.as_mut_u32_slice();
         ints[0] = 17;
         ints[1] = 42;
     }
     {
-        let mut floats = contents.as_mut_f64_slice();
+        let mut floats = data.as_mut_f64_slice();
         floats[1] = 3.14;
     }
 });
@@ -108,8 +108,8 @@ buffer.grab(|mut contents| {
 If you prefer, you can instead use the generic `as_slice` and `as_mut_slice` versions of the API. These leads to more concise code, which can be nice when the type is clear from context:
 
 ```rust
-let first: u32 = buffer.grab(|contents| {
-    contents.as_slice()[0]
+let first: u32 = buffer.grab(|data| {
+    data.as_slice()[0]
 });
 ```
 
@@ -117,9 +117,9 @@ Here, because of the type annotation on `first`, the `as_slice` method is inferr
 
 ### Custom view types
 
-The `as_slice` and `as_mut_slice` methods produce slices of any type that implements the `ViewType` trait. By default, all of the primitive types corresponding to JavaScript typed array view types implement this trait, in addition to `u64` and `i64`. (JavaScript doesn't provide typed arrays for 64-bit integers since they aren't expressible as JavaScript primitive values.)
+The `as_slice` and `as_mut_slice` methods produce slices of any type that implements the `BinaryViewType` trait. By default, all of the primitive types corresponding to JavaScript typed array view types implement this trait, in addition to `u64` and `i64`. (JavaScript doesn't provide typed arrays for 64-bit integers since they aren't expressible as JavaScript primitive values.)
 
-This also makes it possible to create custom `ViewType` implementations for custom view types, but these must be implemented with `unsafe` code.
+This also makes it possible to create custom `BinaryViewType` implementations for custom view types, but these must be implemented with `unsafe` code.
 
 
 # Reference-level explanation
@@ -127,14 +127,14 @@ This also makes it possible to create custom `ViewType` implementations for cust
 
 ## The `ArrayBufferData` type
 
-The primary change to `JsArrayBuffer` is in its implementation of the `Lock` trait. Instead of defining the associated type `Internals` directly as `CMutSlice<u8>`, we change it to a newly-defined `neon::js::binary::ArrayBufferData` struct type:
+The primary change to `JsArrayBuffer` is in its implementation of the `Lock` trait. Instead of defining the associated type `Internals` directly as `CMutSlice<u8>`, we change it to a newly-defined `neon::js::binary::BinaryData` struct type:
 
 ```rust
-struct ArrayBufferData;
+struct BinaryData;
 
-impl ArrayBufferData {
-    fn as_slice<T: ViewType>(&self) -> &[T];
-    fn as_mut_slice<T: ViewType>(&mut self) -> &mut [T];
+impl BinaryData {
+    fn as_slice<T: BinaryViewType>(&self) -> &[T];
+    fn as_mut_slice<T: BinaryViewType>(&mut self) -> &mut [T];
     fn len(&self) -> usize;
 }
 ```
@@ -145,17 +145,17 @@ The `as_mut_slice` method produces a mutable slice of the buffer data.
 
 The `len` method produces the byte length of the buffer.
 
-## The `ViewType` trait
+## The `BinaryViewType` trait
 
-The `ViewType` trait is defined as `unsafe` since its alignment and size must be computed correctly to stay within the bounds of the buffer data.
+The `BinaryViewType` trait is defined as `unsafe` since its alignment and size must be computed correctly to stay within the bounds of the buffer data.
 
 ```rust
-unsafe trait ViewType;
+unsafe trait BinaryViewType;
 ```
 
-### Built-in `ViewType` implementations
+### Built-in `BinaryViewType` implementations
 
-The types that implement `ViewType` by default are the same as JavaScript typed array element types. This proposal also adds support for 64-bit integers since, unlike in JavaScript, they provide no particular challenge for Rust.
+The types that implement `BinaryViewType` by default are the same as JavaScript typed array element types. This proposal also adds support for 64-bit integers since, unlike in JavaScript, they provide no particular challenge for Rust.
 
 - `u8`
 - `i8`
@@ -168,16 +168,16 @@ The types that implement `ViewType` by default are the same as JavaScript typed 
 - `f32`
 - `f64`
 
-### Custom `ViewType` implementations
+### Custom `BinaryViewType` implementations
 
-While it requires `unsafe` code, this design allows users to define their own `ViewTypes` for compound types such as tuples or structs.
+While it requires `unsafe` code, this design allows users to define their own `BinaryViewType`s for compound types such as tuples or structs.
 
 ## Convenience methods
 
-Some contexts of use of `as_slice()` may not provide enough information to Rust's type inference algorithm to determine the `ViewType`, leading to potentially confusing errors. Especially for teaching material and for making this more accessible to new Rust programmers, this proposal also includes convenience methods that are fixed to a specific type.
+Some contexts of use of `as_slice()` may not provide enough information to Rust's type inference algorithm to determine the `BinaryViewType`, leading to potentially confusing errors. Especially for teaching material and for making this more accessible to new Rust programmers, this proposal also includes convenience methods that are fixed to a specific type.
 
 ```rust
-impl ArrayBufferData {
+impl BinaryData {
     fn as_u8_slice(&self) -> &[u8];
     fn as_mut_u8_slice(&mut self) -> &mut [u8];
 
@@ -229,4 +229,4 @@ We could have added more API conveniences, including splitting views and working
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-We need to determine the detailed requirements of the `ViewType` trait. This can be determined during the initial implementation work for this RFC.
+None.
