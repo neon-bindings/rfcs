@@ -1,7 +1,7 @@
 - Feature Name: array_buffer_views
 - Start Date: 2017-11-07
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: [#5](https://github.com/neon-bindings/rfcs/pull/5)
+- Neon Issue: [#313](https://github.com/neon-bindings/neon/issues/313)
 
 # Summary
 [summary]: #summary
