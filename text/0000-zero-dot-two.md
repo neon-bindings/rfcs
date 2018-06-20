@@ -134,11 +134,11 @@ No migration required.
 # Critique
 [critique]: #critique
 
-We could freeze all past decision and avoid backwards-incompatible changes. TODO
+We could freeze all past decision and avoid backwards-incompatible changes. Neon is still at 0.1.x and while the community is growing, I think we still have a budget for incompatible changes.
 
-We could make these changes one at a time. TODO
+We could make these changes one at a time. This would be frustrating to people who'd rather get their upgrades over with.
 
-We could wait for more incompatible changes before releasing a new minor version. TODO
+We could wait for more incompatible changes before releasing a new minor version. There's only so many changes a user can tolerate at once before they're going to either put off upgrading indefinitely or give up on Neon. Since VM 2.0 is a pretty major change, we should only have a small handful of smaller changes go along with it.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
