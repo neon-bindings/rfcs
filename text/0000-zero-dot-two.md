@@ -26,25 +26,29 @@ So this RFC represents an attempt to batch up a small but ideally manageable num
 
 See: [VM 2.0 RFC](https://github.com/neon-bindings/rfcs/pull/14)
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+The primary changes are:
+
+- Neon functions take `cx: CallContext` instead of `call: Call` as their single argument.
+- Most APIs take `&mut cx` instead of `call.scope`.
+- Locking the VM is `cx.borrow_mut(obj, |contents| { ... })` instead of `obj.grab(|contents| { ... })`.
 
 ### `ArrayBuffer` views
 
 See: [`ArrayBuffer` views RFC](https://github.com/neon-bindings/rfcs/blob/master/text/0005-array-buffer-views.md)
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+The primary change is that you no longer need to call `as_slice()` or `as_mut_slice()` on a borrowed `JsArrayBuffer`'s contents, since it will already be a slice.
 
 ### Simplified module organization
 
 See: [Simplified module organization RFC](https://github.com/neon-bindings/rfcs/pull/20)
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+Most code should just be able to eliminate all of their `use` declarations that import from Neon and replace them with a single `use neon::prelude::*;` declaration. Beyond that, it should be a mechanical change and the rustc type errors and suggestions should quickly guide the refactor.
 
 ## Minor changes
 
@@ -52,17 +56,17 @@ TODO
 
 See: [Infallible string constructor RFC](https://github.com/neon-bindings/rfcs/pull/21)
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+Code that calls `JsString::new()` no longer produces an `Option`, so code that matches or `.unwrap()`s the results should be deleted. Code that calls `JsString::new_or_throw()` can be replaced with `JsString::try_new(...).unwrap_or_throw()` (make sure `JsResultExt` is in scope; it automatically is if you import `neon::prelude::*`).
 
 ### Remove `JsInteger`
 
 The `JsInteger` type wasn't very well thought-out: it's an exposure of a V8 C++ class that optimizes some special cases of JavaScript numbers but was never very well documented and is non-standard. We should keep Neon engine-agnostic and in close correspondence with universal JS semantics.
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+Use `JsNumber` instead, and cast from `f64` to `i32` as necessary. (`JsNumber::new()` can accept an i32 without casting.)
 
 ### Remove `Variant`
 
@@ -73,9 +77,16 @@ The `Variant` type was an experiment at representing `typeof` dispatch in Rust v
 
 This just suggests that enums and `typeof` have irreconcilable impedance mismatches, and the trait-based approach that the rest of Neon uses is a better match for JavaScript's extensible subtyping.
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+Patterm matching on a `Variant` can be replaced with conditionals like:
+```rust
+if let Ok(s) = x.downcast::<JsString>() {
+    // ...
+else if let Ok(a) = `.downcast::<JsArray>() {
+    // ...
+} // ...
+```
 
 ### Rename `Key` methods
 
@@ -92,31 +103,33 @@ trait PropertyKey {
 
 The longer name increases clarity and doesn't affect ergonomics since users never actually need to import it.
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+This should not require any explicit changes to code.
 
 ### Remove `.callee()`
 
 We recently discovered that Node 10 dropped support for its C++ API exposing the functionality of `arguments.callee`, and [removed the functionality with a dynamic error in Node 10](https://github.com/neon-bindings/neon/pull/314). This is a dubious feature to begin with. This RFC proposes removing it entirely.
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+If an API needs access to the function being called, it can be passed in as an extra parameter, and a JS facade can be wrapped around the function to give it the right API for JS consumers.
 
 ## CLI changes
 
 ### Default to `--debug`
 
-#### Upgrade requirements
+#### Migration guide
 
-TODO
+Build scripts should make sure to select the right build target. They can always be sure to get the target they want with an explicit `--debug` or `--release` argument.
 
-### Eliminate `NEON_ABI` environment variable
+### Eliminate `NEON_NODE_ABI` environment variable
 
-#### Upgrade requirements
+This environment variable is no longer actually used so it shouldn't make a difference.
 
-TODO
+#### Migration guide
+
+No migration required.
 
 # Critique
 [critique]: #critique
