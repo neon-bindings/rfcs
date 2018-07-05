@@ -209,7 +209,6 @@ impl<'a, T: This> CallContext<'a, T> {
     fn argument_opt(&mut self, i: i32) -> Option<Handle<'a, JsValue>>;
     fn argument<V: Value>(&mut self, i: i32) -> JsResult<'a, V>;
     fn this(&mut self) -> Handle<'a, T>;
-    fn callee(&mut self) -> Handle<'a, JsFunction>;
 }
 
 impl<'a, T: This> Context<'a> for CallContext<'a, T> { /* ... */ };
@@ -333,6 +332,5 @@ Finally, a convenience I abandoned:
 [unresolved]: #unresolved-questions
 
 - Should there be any convenience APIs for common cases of `CallContext` argument extraction, like using `JsValue` as the return type, and converting to `JsString` via `to_js_string()`?
-- Is the type of `CallContext::callee` wrong? In particular, should it have static knowledge of the `this`-type?
-- When should the `this`-type be `JsObject` vs `JsValue`? In the prototype implementation there's some confusion about this currently, probably with some subtle bugs. (In particular, the macros use `CallContext<JsValue>` but `FunctionContext` is a shorthand for `CallContext<JsObject>`.) This is related to the `callee` question above, too.
+- When should the `this`-type be `JsObject` vs `JsValue`? In the prototype implementation there's some confusion about this currently, probably with some subtle bugs. (In particular, the macros use `CallContext<JsValue>` but `FunctionContext` is a shorthand for `CallContext<JsObject>`.)
 - Should we rename `*Context` to `*Cx` for brevity? For example, when writing a helper, you could write `fn helper<C: Cx>(cx: &mut C) { ... }`.
