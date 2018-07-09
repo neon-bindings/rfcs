@@ -55,7 +55,7 @@ This section describes the organization of each public module in detail.
 - `CallKind`
 - `Lock` (renamed from `VmGuard`)
 
-## `neon::vm`
+## `neon::result`
 
 - `NeonResult` (renamed from `VmResult`), `ResultExt`, `Throw`
 
@@ -116,7 +116,7 @@ pub use neon::thread::Task;
 
 I'm not a huge fan of the hoity-toity name "prelude," but it's a Rust community convention so it's best to stick with convention.
 
-We could do nothing, but experience shows that it's pretty hard to keep track of what goes where.
+We could do nothing, but experience shows that it's pretty hard to keep track of what goes where. And we really need to get rid of named concepts like `scope` and `vm`, which are low-level, daunting, and confusing for people who've never dug deep into programming language or engine implementation concepts.
 
 I experimented with [a couple of alternative organization schemes](https://gist.github.com/dherman/add90b760549f15cf90b3e249a06f504) as well:
 - Almost completely flat: Everything except for `thread` and `meta` goes into the Neon top-level. Unfortunately this makes the API docs really overwhelming and hard to navigate.
