@@ -72,7 +72,7 @@ This section describes the organization of each public module in detail.
 - `StringOverflow`, `StringResult`
 - `ErrorKind` (renamed from `Kind`)
 - `Handle`, `Managed`
-- `DowncastError`
+- `DowncastError`, `DowncastResult`
 
 ## `neon::object`
 
@@ -100,8 +100,8 @@ pub use neon::result::{NeonResult, ResultExt};
 // excludes: Ref, RefMut, LoanError
 pub use neon::borrow::{Borrow, BorrowMut};
 
-// excludes: BinaryDataViewType, StringOverflow, StringResult, Managed
-pub use neon::value::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData, ErrorKind, Handle, DowncastError};
+// excludes: BinaryDataViewType, StringOverflow, StringResult, Managed, DowncastError, DowncastResult
+pub use neon::value::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData, ErrorKind, Handle};
 
 // excludes: PropertyKey, This
 pub use neon::object::{Class, Object};
