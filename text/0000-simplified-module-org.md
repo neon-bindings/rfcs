@@ -1,4 +1,4 @@
-- Feature Name: simplified_module_org
+- Feature Name: module_reorg
 - Start Date: 2018-05-31
 - RFC PR:
 - Neon Issue:
@@ -6,22 +6,27 @@
 # Summary
 [summary]: #summary
 
-A simpler organization of the modules in `neon::*`, to make it easier to know how to import from Neon.
+A re-organization of the modules in `neon::*`, designed to optimize:
+- The learnability and understandability of the API docs;
+- The convenience of importing from Neon;
+- Names that reflect abstractions of the JavaScript language (e.g., values and execution contexts), instead of the JavaScript engine (e.g., memory management and VMs).
 
 # Motivation
 [motivation]: #motivation
 
-For a user of Neon, a granular organization of the Neon library makes it hard to remember where to import things from. (For the maintainers of Neon, it's nice to keep the library's internal module sizes small, but there's no reason we need to impose all the details of internal layout of the project on its public API.)
+The current organization of Neon's modules makes it both difficult to know where to find APIs and inconvenient to import them.
 
 This RFC proposes two major changes:
 
-1. Group most of the public Neon APIs into a smaller number of coarse-grained top-level modules.
-2. Create a `neon::prelude` module that re-exports the most commonly needed APIs, so that most projects can get away with just using:
+1. Create a `neon::prelude` module that re-exports the most commonly-needed APIs, so that most projects can get away with just using:
 ```rust
 use neon::prelude::*;
 ```
+2. Reorganize the APIs into smaller but non-nested modules, each oriented around a tightly-defined concept that matches a user's intuition.
 
-This "prelude pattern" is very popular in the Rust ecosystem. It's especially convenient for newcomers just getting started with an API, for tutorials and presentations, and for rapid prototyping.
+The "prelude pattern" is very popular in the Rust ecosystem. It's especially convenient for newcomers just getting started with an API, for tutorials and presentations, and for rapid prototyping. But it's perfectly appropriate for production use as well.
+
+Organizing the APIs into smaller modules makes it easier to guess and to remember where a particular API is defined. Avoiding hierarchical nesting also makes it easier to remember, since it doesn't require remembering the entire nested path from the Neon crate root.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
@@ -30,8 +35,11 @@ For guides, this radically simplifies introductions to the Neon API, since today
 
 Each public module can be explained like so:
 
-- `neon::vm`: types and traits that control the JavaScript VM
-- `neon::js`: types and traits providing access to JavaScript values
+- `neon::cx`: types and traits that represent _execution contexts_, which control access to the JavaScript engine
+- `neon::result`: types and traits for working with JavaScript exceptions
+- `neon::borrow`: types and traits for obtaining temporary access to the internals of JavaScript values
+- `neon::value`: types and traits for manipulating JavaScript values
+- `neon::object`: traits for working with JavaScript objects
 - `neon::thread`: types and traits for implementing multithreading computation
 - `neon::meta`: metadata about the Neon library
 - `neon::prelude`: the Neon "prelude," a re-exported collection of the most commonly-used Neon APIs
@@ -41,19 +49,40 @@ Each public module can be explained like so:
 
 This section describes the organization of each public module in detail.
 
+## `neon::cx`
+
+- `Context`, `CallContext`, `FunctionContext`, `MethodContext`, `ComputeContext`, `ExecuteContext`, `ModuleContext`, `TaskContext`
+- `CallKind`
+- `Lock` (renamed from `VmGuard`)
+
 ## `neon::vm`
 
-Collapse the current `neon::vm`, `neon::mem`, and `neon::scope` modules into one single `neon::vm` module.
+- `NeonResult` (renamed from `VmResult`), `ResultExt`, `Throw`
 
-## `neon::js`
+## `neon::borrow`
 
-Collapse the current `neon::js`, `neon::js::binary`, `neon::js::error`, and `neon::js::class` modules into one single `neon::js` module.
+- `Borrow`, `BorrowMut`, `Ref`, `RefMut`, `LoanError`
 
-Rename the `neon::js::error::Kind` type to `neon::js::ErrorKind`.
+## `neon::value`
+
+- `JsArray`, `JsArrayBuffer`, `JsBoolean`, `JsBuffer`, `JsError`, `JsFunction`, `JsNull`, `JsNumber`, `JsObject`, `JsString`, `JsUndefined`, `JsValue`
+- `JsResult`
+- `Value`
+- `BinaryData`, `BinaryDataViewType`
+- `StringOverflow`, `StringResult`
+- `ErrorKind` (renamed from `Kind`)
+- `Handle`, `Managed`
+- `DowncastError`
+
+## `neon::object`
+
+- `Class`, `ClassDescriptor`
+- `Object`, `PropertyKey`
+- `This`
 
 ## `neon::thread`
 
-Rename `neon::task` to `neon::thread`.
+- `Task`
 
 ## `neon::meta`
 
@@ -61,24 +90,39 @@ No changes.
 
 ## `neon::prelude`
 
-This convenience module re-exports everything except:
+```rust
+// excludes: Lock
+pub use neon::cx::{Context, CallContext, FunctionContext, MethodContext, ComputeContext, ExecuteContext, ModuleContext, TaskContext, CallKind};
 
-- the contents of `neon::meta`
-- the contents of `neon::thread`
-- any of the tagging traits:
-  * `vm::{Managed, This}`
-  * `js::{Key, BinaryDataViewType}`
-- any of the types that implement `Scope` (or `Context` in [VM 2.0](https://github.com/neon-bindings/rfcs/pull/14))
-- `js::ClassDescriptor`
+// excludes: Throw
+pub use neon::result::{NeonResult, ResultExt};
+
+// excludes: Ref, RefMut, LoanError
+pub use neon::borrow::{Borrow, BorrowMut};
+
+// excludes: BinaryDataViewType, StringOverflow, StringResult, Managed
+pub use neon::value::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData, ErrorKind, Handle, DowncastError};
+
+// excludes: PropertyKey, This
+pub use neon::object::{Class, Object};
+
+pub use neon::thread::Task;
+
+// excludes: neon::meta::*;
+```
 
 # Critique
 [critique]: #critique
 
-I'm not a huge fan of requiring everyone to use the hoity-toity term "prelude," but it's a Rust community convention so it's best to stick with convention.
+I'm not a huge fan of the hoity-toity name "prelude," but it's a Rust community convention so it's best to stick with convention.
 
 We could do nothing, but experience shows that it's pretty hard to keep track of what goes where.
 
-We could collapse everything down to one completely flat namespace. But I think a tiny bit of coarse-grained structure helps make the overall API not feel so huge.
+I experimented with [a couple of alternative organization schemes](https://gist.github.com/dherman/add90b760549f15cf90b3e249a06f504) as well:
+- Almost completely flat: Everything except for `thread` and `meta` goes into the Neon top-level. Unfortunately this makes the API docs really overwhelming and hard to navigate.
+- Moderately layered: This attempts to divide the world into a "VM" abstraction layer and a "JS" abstraction layer. I found it very hard to explain these layers or to figure out how to sort the various definitions into one or the other layer.
+
+At the end of the day, I think it's best explained as: Neon is offering a single abstraction layer, which roughly corresponds to the JavaScript language semantics, but with a couple of extra concepts (namely: handles and contexts) for making interaction with it safe. Within that single layer, there are a number of (interrelated) concepts, and it's helpful to group the API by those concepts.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
