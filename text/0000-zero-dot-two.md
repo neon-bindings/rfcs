@@ -60,6 +60,14 @@ See: [Infallible string constructor RFC](https://github.com/neon-bindings/rfcs/p
 
 Code that calls `JsString::new()` no longer produces an `Option`, so code that matches or `.unwrap()`s the results should be deleted. Code that calls `JsString::new_or_throw()` can be replaced with `JsString::try_new(...).unwrap_or_throw()` (make sure `JsResultExt` is in scope; it automatically is if you import `neon::prelude::*`).
 
+### Error subtyping
+
+See: [Error subtyping RFC](https://github.com/neon-bindings/rfcs/pull/23)
+
+#### Migration guide
+
+A relatively mechanical change: replace `JsError::new(..., Kind::FooError, ...)` or `JsError::throw(..., Kind::FooError, ...)` with either `cx.foo_error(...)` / `cx.throw_foo_error(...)` or `JsFooError::new(&mut cx, ...)` / `JsFooError::throw(&mut cx, ...)`.
+
 ### Remove `JsInteger`
 
 The `JsInteger` type wasn't very well thought-out: it's an exposure of a V8 C++ class that optimizes some special cases of JavaScript numbers but was never very well documented and is non-standard. We should keep Neon engine-agnostic and in close correspondence with universal JS semantics.
