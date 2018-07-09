@@ -35,7 +35,7 @@ For guides, this radically simplifies introductions to the Neon API, since today
 
 Each public module can be explained like so:
 
-- `neon::cx`: types and traits that represent _execution contexts_, which control access to the JavaScript engine
+- `neon::context`: types and traits that represent _execution contexts_, which control access to the JavaScript engine
 - `neon::result`: types and traits for working with JavaScript exceptions
 - `neon::borrow`: types and traits for obtaining temporary access to the internals of JavaScript values
 - `neon::value`: types and traits for manipulating JavaScript values
@@ -49,7 +49,7 @@ Each public module can be explained like so:
 
 This section describes the organization of each public module in detail.
 
-## `neon::cx`
+## `neon::context`
 
 - `Context`, `CallContext`, `FunctionContext`, `MethodContext`, `ComputeContext`, `ExecuteContext`, `ModuleContext`, `TaskContext`
 - `CallKind`
@@ -92,7 +92,7 @@ No changes.
 
 ```rust
 // excludes: Lock
-pub use neon::cx::{Context, CallContext, FunctionContext, MethodContext, ComputeContext, ExecuteContext, ModuleContext, TaskContext, CallKind};
+pub use neon::context::{Context, CallContext, FunctionContext, MethodContext, ComputeContext, ExecuteContext, ModuleContext, TaskContext, CallKind};
 
 // excludes: Throw
 pub use neon::result::{NeonResult, ResultExt};
@@ -103,7 +103,7 @@ pub use neon::borrow::{Borrow, BorrowMut};
 // excludes: BinaryDataViewType, StringOverflow, StringResult, Managed, DowncastError, DowncastResult
 pub use neon::value::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData, ErrorKind, Handle};
 
-// excludes: PropertyKey, This
+// excludes: PropertyKey, This, ClassDescriptor
 pub use neon::object::{Class, Object};
 
 pub use neon::thread::Task;
