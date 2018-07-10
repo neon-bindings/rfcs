@@ -96,6 +96,14 @@ else if let Ok(a) = `.downcast::<JsArray>() {
 } // ...
 ```
 
+### Remove `ToJsString`
+
+The `ToJsString` type is incorrectly documented in the API docs as an implementation of `\[\[ToString]]`. In fact, it's just a convenience trait for types that are infallibly convertible to `JsString`. It ends up not really being needed in the Neon API, and I don't _think_ it's highly used in the community. The name is awkward, the definition is unclear, and it's otherwise just taking up API space.
+
+#### Migration guide
+
+Change APIs that take `ToJsString` to just directly take `JsString` or `String` or `&str`.
+
 ### Rename `Key` methods
 
 Since `Key::get` and `Key::set` have the same method names as `Object::get` and `Object::set`, they confuse the Rust compiler's mechanism for suggesting fixes when Neon users forget to import the `Object` trait. That is, when calling `obj.get(...)` or `obj.set(...)`, rustc suggests importing the `Key` trait, when the right suggestion would be `Object`.
