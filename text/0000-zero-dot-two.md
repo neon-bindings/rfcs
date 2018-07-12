@@ -68,6 +68,14 @@ See: [Error subtyping RFC](https://github.com/neon-bindings/rfcs/pull/23)
 
 A relatively mechanical change: replace `JsError::new(..., Kind::FooError, ...)` or `JsError::throw(..., Kind::FooError, ...)` with either `cx.foo_error(...)` / `cx.throw_foo_error(...)` or `JsFooError::new(&mut cx, ...)` / `JsFooError::throw(&mut cx, ...)`.
 
+### `JsBuffer::new()` vs `JsBuffer::uninitialized()`
+
+To match modern `Buffer` behavior, and to be safer, the `JsBuffer::new()` constructor now always zero-fills the buffer it returns. The `JsBuffer::uninitialized()` constructor implements the legacy behavior, but is marked `unsafe` since it contains unspecified initial contents.
+
+#### Migration guide
+
+In most cases, code should continue to work unchanged. If you absolutely require the legacy behavior, change `JsBuffer::new()` calls to `JsBuffer::uninitialized()` and place the constructor call inside an `unsafe { }` block.
+
 ### Remove `JsInteger`
 
 The `JsInteger` type wasn't very well thought-out: it's an exposure of a V8 C++ class that optimizes some special cases of JavaScript numbers but was never very well documented and is non-standard. We should keep Neon engine-agnostic and in close correspondence with universal JS semantics.
