@@ -35,14 +35,15 @@ For guides, this radically simplifies introductions to the Neon API, since today
 
 Each public module can be explained like so:
 
-- `neon::context`: types and traits that represent _execution contexts_, which control access to the JavaScript engine
-- `neon::result`: types and traits for working with JavaScript exceptions
-- `neon::borrow`: types and traits for obtaining temporary access to the internals of JavaScript values
-- `neon::value`: types and traits for manipulating JavaScript values
-- `neon::object`: traits for working with JavaScript objects
-- `neon::thread`: types and traits for implementing multithreading computation
-- `neon::meta`: metadata about the Neon library
-- `neon::prelude`: the Neon "prelude," a re-exported collection of the most commonly-used Neon APIs
+- `neon::context`: Node _execution contexts_, which manage access to the JavaScript engine at various points in the Node.js runtime lifecycle
+- `neon::result`: Types and traits for working with JavaScript exceptions
+- `neon::borrow`: Types and traits for obtaining temporary access to the internals of JavaScript values
+- `neon::handle`: Safe _handles_ to managed JavaScript memory
+- `neon::types`: Representations of JavaScript's core builtin types
+- `neon::object`: Traits for working with JavaScript objects
+- `neon::thread`: Asynchronous access to multithreading computation in a Node plugin
+- `neon::meta`: Utilities exposing metadata about the Neon version and build
+- `neon::prelude`: A convenience module that re-exports the most commonly-used Neon APIs
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -57,22 +58,24 @@ This section describes the organization of each public module in detail.
 
 ## `neon::result`
 
-- `NeonResult` (renamed from `VmResult`), `ResultExt`, `Throw`
+- `NeonResult` (renamed from `VmResult`), `JsResult`, `JsResultExt`, `Throw`
 
 ## `neon::borrow`
 
 - `Borrow`, `BorrowMut`, `Ref`, `RefMut`, `LoanError`
 
-## `neon::value`
+## `neon::handle`
+
+- `Handle`, `Managed`
+- `DowncastError`, `DowncastResult`
+
+## `neon::types`
 
 - `JsArray`, `JsArrayBuffer`, `JsBoolean`, `JsBuffer`, `JsError`, `JsFunction`, `JsNull`, `JsNumber`, `JsObject`, `JsString`, `JsUndefined`, `JsValue`
 - `JsResult`
 - `Value`
 - `BinaryData`, `BinaryDataViewType`
 - `StringOverflow`, `StringResult`
-- `ErrorKind` (renamed from `Kind`)
-- `Handle`, `Managed`
-- `DowncastError`, `DowncastResult`
 
 ## `neon::object`
 
@@ -95,13 +98,16 @@ No changes.
 pub use neon::context::{Context, CallContext, FunctionContext, MethodContext, ComputeContext, ExecuteContext, ModuleContext, TaskContext, CallKind};
 
 // excludes: Throw
-pub use neon::result::{NeonResult, ResultExt};
+pub use neon::result::{NeonResult, JsResult, JsResultExt};
+
+// excludes: Managed, DowncastError, DowncastResult
+pub use neon::handle::Handle;
 
 // excludes: Ref, RefMut, LoanError
 pub use neon::borrow::{Borrow, BorrowMut};
 
-// excludes: BinaryDataViewType, StringOverflow, StringResult, Managed, DowncastError, DowncastResult
-pub use neon::value::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData, ErrorKind, Handle};
+// excludes: BinaryDataViewType, StringOverflow, StringResult
+pub use neon::types::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFunction, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, JsResult, Value, BinaryData};
 
 // excludes: PropertyKey, This, ClassDescriptor
 pub use neon::object::{Class, Object};
