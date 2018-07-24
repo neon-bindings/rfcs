@@ -41,7 +41,7 @@ Each public module can be explained like so:
 - `neon::handle`: Safe _handles_ to managed JavaScript memory
 - `neon::types`: Representations of JavaScript's core builtin types
 - `neon::object`: Traits for working with JavaScript objects
-- `neon::thread`: Asynchronous access to multithreading computation in a Node plugin
+- `neon::task`: Asynchronous access to background tasks in the Node thread pool
 - `neon::meta`: Utilities exposing metadata about the Neon version and build
 - `neon::prelude`: A convenience module that re-exports the most commonly-used Neon APIs
 
@@ -83,7 +83,7 @@ This section describes the organization of each public module in detail.
 - `Object`, `PropertyKey`
 - `This`
 
-## `neon::thread`
+## `neon::task`
 
 - `Task`
 
@@ -112,7 +112,7 @@ pub use neon::types::{JsArray, JsArrayBuffer, JsBoolean, JsBuffer, JsError, JsFu
 // excludes: PropertyKey, This, ClassDescriptor
 pub use neon::object::{Class, Object};
 
-pub use neon::thread::Task;
+pub use neon::task::Task;
 
 // excludes: neon::meta::*;
 ```
