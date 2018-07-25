@@ -1,7 +1,7 @@
 - Feature Name: string_constructor
 - Start Date: 2018-06-15
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: https://github.com/neon-bindings/rfcs/pull/21
+- Neon Issue: https://github.com/neon-bindings/neon/pull/322
 
 # Summary
 [summary]: #summary
