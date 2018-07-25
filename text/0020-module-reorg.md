@@ -1,7 +1,7 @@
 - Feature Name: module_reorg
 - Start Date: 2018-05-31
-- RFC PR:
-- Neon Issue:
+- RFC PR: https://github.com/neon-bindings/rfcs/pull/20
+- Neon Issue: https://github.com/neon-bindings/neon/pull/324
 
 # Summary
 [summary]: #summary
