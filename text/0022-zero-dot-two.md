@@ -1,7 +1,7 @@
 - Feature Name: zero_dot_two
 - Start Date: 2018-06-17
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: https://github.com/neon-bindings/rfcs/pull/22
+- Neon Issue: https://github.com/neon-bindings/neon/pull/323
 
 # Summary
 [summary]: #summary
