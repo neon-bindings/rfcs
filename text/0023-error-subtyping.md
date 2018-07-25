@@ -1,7 +1,7 @@
 - Feature Name: error_subtyping
 - Start Date: 2018-07-09
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: https://github.com/neon-bindings/rfcs/pull/23
+- Neon Issue: https://github.com/neon-bindings/neon/pull/325
 
 # Summary
 [summary]: #summary
