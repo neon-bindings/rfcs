@@ -75,8 +75,7 @@ Example for providing the current progress of a background operation:
     let mut this = cx.this();
     let cb = cx.argument::<JsFunction>(0)?;
     let handler = EventHandler::new(cb);
-    // or
-    let handler = EventHandler::bind(this, cb);
+    // or:      = EventHandler::bind(this, cb);
     thread::spawn(move || {
         for i in 0..100 {
             // do some work ....
@@ -108,8 +107,7 @@ Example for providing the current progress of a background operation:
     let mut this = cx.this();
     let cb = cx.argument::<JsFunction>(0)?;
     let handler = EventHandler::new(cb);
-    // or
-    let handler = EventHandler::bind(this, cb);
+    // or:      = EventHandler::bind(this, cb);
     thread::spawn(move || {
         for i in 0..100 {
             // do some work ....
