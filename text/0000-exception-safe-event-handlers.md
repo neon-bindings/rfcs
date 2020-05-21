@@ -50,7 +50,7 @@ In both cases, there is no good way for code inside the Rust closure to handle o
 
 For the high-level `schedule()` API, this RFC proposes changing the Rust closure to return a `JsResult` and using the standard, classic Node callback protocol of sending an error value as the first argument (or `null`) and a success value as the second argument (or `null`).
 
-For the low-level `schedule_with()` API, this RFC proposes no changes. However, in another RFC we could propose a `try_catch()` API to allow defensive code to handle exceptions.
+For the low-level `schedule_with()` API, this RFC proposes only the small change of a `NeonResult<()>` output type, to allow the Rust callback to propagate uncaught JavaScript exceptions to the Node top-level. However, in another RFC we could propose a `try_catch()` API to allow defensive code to handle exceptions.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
