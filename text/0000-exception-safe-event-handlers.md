@@ -13,40 +13,16 @@
 
 [RFC 25](https://github.com/neon-bindings/rfcs/blob/master/text/0025-event-handler.md) introduced a powerful new API for transmitting a JavaScript event handler to other Rust threads so that they can asynchronously signal events back to the main JavaScript thread.
 
-It offers a low-level API, which gives the Rust thread complete control in how it interacts with the callback:
+However, in that design, the Rust code that prepares the results to send to the event handler has no way to manage operations that can trigger JavaScript exceptions. This shows up even in the simple examples in that RFC, which are forced to use `.unwrap()` to deal with `NeonResult` values:
 
 ```rust
-// Main thread:
-let this = cx.undefined();
-let handler = EventHandler::new(cx, this, f);
+let handler = EventHandler::new(...);
 
-// ...
-
-// Another Rust thread:
-handler.schedule_with(move |cx, this, f| {
-    let args = vec![ /* ... */ ];
-    f.call(cx, this, args).unwrap();
-};
-```
-
-And it offers a high-level API, which only requires the Rust thread to supply a vector of arguments, at which point the API automatically calls the callback:
-
-```rust
-// Main thread:
-let this = cx.undefined();
-let handler = EventHandler::new(cx, this, f);
-
-// ...
-
-// Another Rust thread:
-handler.schedule(move |cx, this, f| {
-    let buf = cx.buffer(1024).unwrap();
-    let args = vec![ buf, /* etc... */ ];
-    args
+handler.schedule(move, |cx, this, f| {
+    let buf = cx.buffer(1024).unwrap(); // panics on exception!
+    ...
 });
 ```
-
-In both cases, there is no good way for code inside the Rust closure to handle operations that might trigger JavaScript exceptions. For example, notice the `unwrap()` calls in both examples above.
 
 For the high-level `schedule()` API, this RFC proposes changing the Rust closure to return a `JsResult` and using the standard, classic Node callback protocol of sending an error value as the first argument (or `null`) and a success value as the second argument (or `null`).
 
@@ -83,7 +59,7 @@ Example for providing the current progress of a background operation:
             // schedule a call into javascript
             handler.schedule(move |cx| {
                 // successful result to be passed to the event handler
-                Ok(cx.number(i).upcast())
+                Ok(cx.number(i))
             }
         }
     });
@@ -156,7 +132,9 @@ The type signatures are perhaps a bit more complex. But we should lean on the AP
 
 Currently the `neon::event` module is protected by a feature flag, and can't be made generally available until we resolve the problem that it has no way to handle JavaScript exceptions.
 
-We should separately propose a `try_catch()` API for wrapping computations that might throw JavaScript exceptions in a closure and converting the result of the computation in a `Result`. We could leave the `neon::event` API as-is and just tell people to use that. But the high-level API would be less ergonomic, since you'd commonly have to wrap everything in a `try_catch`. Also it seems better to decouple the two APIs and release `neon::event` without having to design and implement a complete `try_catch` solution.
+We should separately propose a `try_catch()` API for wrapping computations that might throw JavaScript exceptions in a closure and converting the result of the computation into a `Result`. We could leave the `neon::event` API as-is and just tell people to use that. But the high-level API would be less ergonomic, since you'd commonly have to wrap everything in a `try_catch`. Also it seems better to decouple the two APIs and release `neon::event` without having to design and implement a complete `try_catch` solution.
+
+Another benefit of `try_catch()` would be to avoid C++ in the implementation of this API. But that's not a blocker, just a way to eventually streamline the implementation.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
