@@ -10,7 +10,7 @@ This RFC proposes a new `Context` method for catching any JavaScript exceptions 
 ```rust
 match cx.try_catch(|cx| { cx.throw(42) }) {
     Ok(v) => { /* ... computation produced a normal result ... */ }
-    Err(Catch(v)) => { /* ... computation threw an exception ... */ }
+    Err(v) => { /* ... computation threw an exception ... */ }
 }
 ```
 
@@ -39,7 +39,7 @@ Example:
 ```rust
 let v = match cx.try_catch(|cx| { cx.throw(v) }) {
     Ok(v) => v,
-    Err(Catch(v)) => v
+    Err(v) => v
 };
 ```
 
@@ -56,18 +56,12 @@ The `is_throwing()` method is safe for throwing state.
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-The `neon::result` module defines a `Catch` type that represents a caught exception value:
-
-```rust
-pub struct Catch<'a, T>(Handle<'a, T>);
-```
-
 The `neon::context::Context` trait gets two new methods:
 
 ```rust
 pub trait Context<'a> {
     fn is_throwing(&self) -> bool;
-    fn try_catch<T, U, F>(&self, f: F) -> Result<T, Catch<'a, U>>
+    fn try_catch<T, U, F>(&self, f: F) -> Result<Handle<'a, T>, Handle<'a, U>>
     where
         T: Value,
         U: Value,
