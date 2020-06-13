@@ -1,7 +1,7 @@
 - Feature Name: exception_safe_event_handlers
 - Start Date: 2020-01-31
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: https://github.com/neon-bindings/rfcs/pull/28
+- Neon Issue: https://github.com/neon-bindings/neon/issues/526
 
 # Summary
 [summary]: #summary
