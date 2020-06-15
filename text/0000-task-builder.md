@@ -124,7 +124,7 @@ where
 
 The existing unsafe `perform_task` and `complete_task` passed as static pointers to `neon_runtime::task::schedule` are modified to expect boxed closures `Perform` and `Complete` respectively.
 
-```
+```rust
 unsafe extern "C" fn perform_task<Perform, Output>(
     perform: *mut c_void,
 ) -> *mut c_void
@@ -158,6 +158,7 @@ where
 ### `Task` trait
 
 The default `schedule` implementation on the `Task` trait is replaced with a delegate to the new `fn schedule` function.
+
 ```rust
     fn schedule(self, callback: Handle<JsFunction>) {
         schedule(move || {
@@ -250,7 +251,7 @@ The full set of bounds required by `TaskBuilder::schedule` are also provided on 
 * `.schedule(cb)`. This is a higher level method that schedules the task and also returns an `undefined` as `JsResult<JsValue>` for easy returning from another neon function.
 * `.schedule_task(cb)`. This is a lower level task that submits the task, but does not return a value.
 
-```
+```rust
 impl<'a, 'c, C, Perform, Complete, Output> TaskBuilder<'c, C, Perform>
 where
     C: Context<'a>,
