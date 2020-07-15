@@ -60,18 +60,29 @@ The `neon::context::Context` trait gets two new methods:
 
 ```rust
 pub trait Context<'a> {
+    // N-API only
     fn is_throwing(&self) -> bool;
-    fn try_catch<T, U, F>(&self, f: F) -> Result<Handle<'a, T>, Handle<'a, U>>
+
+    fn try_catch<'b: 'a, T, F>(&mut self, f: F) -> Result<Handle<'a, T>, Handle<'a, JsValue>>
     where
         T: Value,
-        U: Value,
-        F: for<'b> FnOnce(CatchContext<'b>) -> JsResult<'b, T>;
+        F: FnOnce(&mut Self) -> JsResult<'b, T>;
 }
 ```
 
-The `is_throwing` method can be implemented with the N-API [`napi_is_exception_pending`](https://nodejs.org/api/n-api.html#n_api_napi_is_exception_pending) method in the upcoming N-API backend, or the underlying V8 API in the legacy backend.
+The `is_throwing` method can be implemented with the N-API [`napi_is_exception_pending`](https://nodejs.org/api/n-api.html#n_api_napi_is_exception_pending) method in the upcoming N-API backend. If the implementation would be too complicated, this method may not be supported with the legacy backend.
 
 The `try_catch` method can be implemented with the N-API [`napi_get_and_clear_last_exception`](https://nodejs.org/api/n-api.html#n_api_napi_get_and_clear_last_exception), or with [`Nan::TryCatch`](https://github.com/nodejs/nan/blob/master/doc/errors.md#api_nan_try_catch) in the legacy backend.
+
+For the legacy backend, the type parameter `F` has an additional constraint:
+
+```rust
+F: std::panic::UnwindSafe
+```
+
+This restriction can be lifted for the N-API backend, which is a backwards-compatible change.
+
+If the callback to `try_catch` produces `Err(Throw)` but the VM is not actually in a throwing state, the `try_catch` function panics.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -87,6 +98,10 @@ Alternatives:
 
 I tried these approaches before and they were just awkward and less readable. Note also the more awkward naming and awkward closure arguments.
 
+We also tried removing the context argument from the callback, since the API simply passes `self` down to the callback, but Rust's type rules for `&mut` references prevent the inner callback from referencing the context since calling `cx.try_catch()` effectively locks `cx`.
+
+We considered making the type of `try_catch` generic in the return type as well, but this would require doing a downcast, and the goal of `try_catch` is to be infallible so that the `Result` return type only represents a caught JS exception.
+
 Alternative naming:
 - `cx.r#try()`: feels more correct but the lexical syntax is super unfortunate.
 - `cx.catch()`: prettier than `try_catch` but not very accurate naming.
@@ -94,5 +109,4 @@ Alternative naming:
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- We need some implementation experience to get the API signatures exactly right, especially the lifetimes.
 - We need some usage experience to see how ergonomic the reflection of exceptions into a `Result` type turns out to be.
