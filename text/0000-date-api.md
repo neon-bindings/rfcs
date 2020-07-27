@@ -11,13 +11,13 @@ This proposal defines an API for creating and inspecting JavaScript `Date` objec
 # Motivation
 [motivation]: #motivation
 
-The JavaScript `Date` API is effectively quite similar to the Rust `std::time::SystemTime` API: a non-monotonic view of the system clock. This type should be reflected into Rust, and it should be possibly to conveniently interoperate between the corresponding JavaScript and Rust APIs.
+The `Date` type is part of the standard JavaScript library and should be exposed to Rust.
 
 Example:
 
 ```rust
-let date: Handle<JsDate> = JsDate::now(scope)?;
-let time: SystemTime = date.as_time();
+let date: Handle<JsDate> = JsDate::new(1431673200000)?;
+let value: f64 = date.value(); // 1431673200000.0
 ```
 
 # Pedagogy
@@ -25,49 +25,21 @@ let time: SystemTime = date.as_time();
 
 This is a relatively straightforward API and can be explained with the API docs.
 
-The API docs should make sure to suggest the [`chrono`](https://github.com/chronotope/chrono) crate as a convenient way to work with date values.
-
 # Details
 [details]: #details
 
 ## `JsDate`
 
-This API adds a `JsDate` type to `neon::js`:
+This API adds a `JsDate` type to `neon::types`:
 
 ```rust
 impl JsDate {
-    pub fn new<'a, S: Scope<'a>, V: AsTimeValue>(_: &mut S, value: V) -> JsResult<JsDate>;
-    pub fn now<'a, S: Scope<'a>>(_: &mut S) -> JsResult<JsDate>;
+    pub fn new<'a, S: Scope<'a>, V: Into<f64>>(_: &mut S, value: V) -> JsResult<JsDate>;
     pub fn value(self) -> f64;
-    pub fn as_time(self) -> SystemTime;
 }
 ```
 
-The `JsDate::new()` method takes any implementation of `AsTimeValue`, described below.
-
-## `AsTimeValue`
-
-The `AsTimeValue` trait is defined for value types (implementations of `Copy`) that can represent [time values](https://www.ecma-international.org/ecma-262/8.0/index.html#sec-time-values-and-time-range), which can be used to construct `Date` objects.
-
-```rust
-trait AsTimeValue: Copy {
-    fn as_time_value(self) -> f64;
-}
-```
-
-There are three implementors of `AsTimeValue`: `i32`, `f64`, and `SystemTime`.
-
-```rust
-impl AsTimeValue for i32 { /* ... */ }
-impl AsTimeValue for SystemTime { /* ... */ }
-impl AsTimeValue for f64 { /* ... */ }
-```
-
-The implementation of `AsTimeValue` for `SystemTime` determines the number of milliseconds since the Unix epoch by calling
-```rust
-SystemTime::now().duration_since(UNIX_EPOCH)
-```
-and then using `as_secs()` and `subsec_nanos()` to compute the right number.
+Like [`neon::types::JsNumber`](https://docs.rs/neon/0.4.0/neon/types/struct.JsNumber.html), the constructor accepts any type coercible to `f64`.
 
 ## Dates are objects
 
@@ -80,15 +52,9 @@ impl Object for JsDate { /* ... */ }
 # Critique
 [critique]: #critique
 
-We could support other date/time libraries out of the box, such as the [`time`](https://github.com/rust-lang-deprecated/time) crate, or [`chrono`](https://github.com/chronotope/chrono). However, `time` is deprecated, and `chrono` defines full-fidelity coercions from the stdlib types to its richer API. So it's better just to stick to the standard library, which is the most stable option, and then recommend `chrono` in the API docs. Client code would look like:
-
-```rust
-let date: DateTime<Local> = js_date.as_time().into();
-```
-
-We could have explicit `from_XXX` methods instead of the `AsTimeValue` trait, but `JsDate::new()` is a nicer API and doesn't require clients to import the trait in order to use the constructor. So it's no less convenient and also more extensible.
+Previous revisions of this RFC offered automatic conversations to and from the standard library's [`std::time::SystemTime`](https://doc.rust-lang.org/std/time/struct.SystemTime.html) type. However, it's not entirely clear that this type is completely equivalent to JavaScript's `Date` API. Given that JavaScript's `Date` is explicitly interconvertible to double-precision floating-point numbers, the most basic primitive we can offer at first is an API based on `f64`. In future we could consider whether there are sensible coercions we can offer between `JsDate` and other Rust date/time APIs.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-Are there any hidden impedance mismatches between `Date` and `SystemTime`? It seems like both represent non-monotonic time and can be computed as the elapsed time since the Unix epoch. `SystemTime` is higher-resolution but that seems OK, unless I'm missing some subtleties.
+None
