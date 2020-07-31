@@ -125,10 +125,10 @@ The `Pool` instance can later be downcast and borrowed.
 
 ```rust
 fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
-    let pool_box = cx.argument::<JsCell<Pool>>(0)?;
+    let pool_cell = cx.argument::<JsCell<Pool>>(0)?;
     let id = cx.argument::<JsNumber>(1)?.value();
 
-    let pool = pool_box.borrow(&mut cx)?;
+    let pool = pool_cell.borrow(&mut cx)?;
 
     let username = pool.get_by_id(id)
 
