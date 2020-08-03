@@ -6,7 +6,7 @@
 # Summary
 [summary]: #summary
 
-`JsBox` is a smart pointer to data created in Rust and managed by the V8 garbage collector. `JsBox` are a basic building block for higher level APIs like neon [classes](https://docs.rs/neon/0.4.0/neon/macro.declare_types.html).
+`JsBox` is a smart pointer to data created in Rust and managed by the V8 garbage collector. `JsBox` is a basic building block for higher level APIs like neon [classes](https://docs.rs/neon/0.4.0/neon/macro.declare_types.html).
 
 # Motivation
 [motivation]: #motivation
@@ -123,12 +123,12 @@ fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<Pool>> {
 
 The `Pool` instance can later be borrowed:
 
+_Note: Through `std::ops::Deref` and the magic of auto-deref, `JsBox<T>` can be treated as `&T`._
+
 ```rust
 fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
-    let pool_box = cx.argument::<JsBox<Pool>>(0)?;
+    let pool = cx.argument::<JsBox<Pool>>(0)?;
     let id = cx.argument::<JsNumber>(1)?.value();
-
-    let pool = pool_box.deref(&mut cx)?;
 
     let username = pool.get_by_id(id)
 
@@ -147,11 +147,9 @@ fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Pool>>> {
 
 fn set_pool_size(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let size = cx.argument::<JsNumber>(1)?.value() as u32;
-    let mut pool = cx.argument::<JsPool<RefCell<Pool>>>(0)?
-        .deref(&mut cx)
-        .borrow_mut();
+    let mut pool = cx.argument::<JsPool<RefCell<Pool>>>(0)?;
 
-    pool.set_size(size);
+    pool.borrow_mut().set_size(size);
 
     Ok(cx.undefined())
 }
@@ -163,13 +161,11 @@ fn set_pool_size(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 ### `neon::types::JsBox`
 
 ```rust
-impl JsValue for JsBox {}
+impl<T: Send + 'static> JsValue for JsBox<T> {}
 
-impl Managed for JsBox {}
+impl<T: Send + 'static> Managed for JsBox<T> {}
 
-impl This for JsBox {}
-
-impl ValueInternal for JsBox {}
+impl<T: Send + 'static> ValueInternal for JsBox<> {}
 
 impl<T> JsBox where T: Send + 'static {
     /// This should only fail if the VM is in a throwing state or is
@@ -178,16 +174,25 @@ impl<T> JsBox where T: Send + 'static {
         cx: &mut C,
         v: T,
     ) -> NeonResult<JsBox>;
-
-    /// May panic if already mutably borrowed
-    pub fn deref<'a, C: Context<'a>>(
-        &self,
-        cx: &mut C,
-    ) ->&'a T;
 }
 ```
 
 `JsBox` can be passed back and forth between Javascript and Rust like any other Js value.
+
+
+#### `std::ops::Deref`
+
+`JsBox<T>` acts as a smart-pointer and can be coerced to a `&T` by auto-deref.
+
+```rust
+impl<'a, T: Send + 'static> Deref for JsBox<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target;
+}
+```
+
+It is not possible to statically prove that two `JsBox<T>` do not alias the same pointer. For example, if a user passes the same value as two arguments to a function. Therefore, it is only safe for `JsBox<T>` to implement `Deref` and not `DerefMut`.
 
 #### `Send + 'static`
 
@@ -220,7 +225,7 @@ trait Context<'a> {
 
 *Note*: Passing an external created by another library, potentially even another neon library, is _undefined behavior_.
 
-Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It should be incorporated into this design if it lands prior to acceptance.
+Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It should be incorporated into future designs; however, it is not included in this proposal.
 
 ##### Rust
 
@@ -234,11 +239,91 @@ Box<Box<T>> as Box<Box<dyn Any + 'static>>
 # Drawbacks
 [drawbacks]: #drawbacks
 
-* Overlaps with class API. However, the goal is to build the existing class API with this primitive and eventually deprecate it.
+* Overlaps with class API. However, the goal is to build the existing class API with this primitive and eventually deprecate the macro.
 * Provides limited functionality and increases surface area.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
+
+### Statically checked borrowing
+
+As an alternative to only allowing shared references, the lifetime of the reference could be constrained by the lifetime of a borrow to `Context`.
+
+```rust
+impl<T> JsBox where T: Send + 'static {
+    pub fn borrow<'a: 'b, 'b, C: Context<'a>>(
+        self,
+        cx: &'b C,
+    ) -> &'b T;
+    pub fn borrow_mut<'a: 'b, 'b, C: Context<'a>>(
+        self,
+        cx: &mut 'b C,
+    ) -> &'b mut T;
+}
+```
+
+Borrowing rules on `Context` would enforce that only a single `JsBox` could be borrowed mutably at once. However, this approach has two significant drawbacks that impair ergonomics:
+
+* Many `neon` methods require `&mut Context`. While a `JsBox` is borrowed, most `neon` methods could not be called. We could potentially mitigate this by performing a sweeping audit and relaxing constraints where a shared reference is acceptable
+* Multiple `JsBox`, even if they are unrelated, could not be borrowed at the same time because there is no way to statically prove they do not point to the same underlying data
+* Impairs ergonomics on APIs that do not require mutable borrowing since `Deref` cannot be implemented
+
+### `JsCell`
+
+Neon could provide a `JsCell` type that is identical to `JsBox`, but also wraps the underlying `T` in a `std::cell::RefCell`. This allows the user to also mutably borrow the value.
+
+```rust
+impl<T> JsCell where T: Send + 'static {
+    /// This should only fail if the VM is in a throwing state or is
+    /// in the process of stopping.
+    pub fn new<'a, C: Context<'a>>(
+        cx: &mut C,
+        v: T,
+    ) -> NeonResult<JsCell>;
+    /// May panic if already mutably borrowed
+    pub fn borrow<'a, C: Context<'a>>(
+        &self,
+        cx: &mut C,
+    ) -> Ref<'a, T>;
+    pub fn try_borrow<'a, C: Context<'a>>(
+        &self,
+        cx: &mut C,
+    ) -> Result<Ref<'a, T>, BorrowError>;
+    /// May panic if already borrowed
+    pub fn borrow_mut<'a, C: Context<'a>>(
+        &self,
+        cx: &mut C,
+    ) -> RefMut<'a, T>;
+    pub fn try_borrow_mut<'a, C: Context<'a>>(
+        &self,
+        cx: &mut C,
+    ) -> Result<RefMut<'a, T>, BorrowMutError>;
+    /// The most common `RefCell` methods are provided on `JsCell` as a
+    /// convenience. Other methods may can be accessed by calling `as_cell`
+    pub fn as_cell<'a, C: Context<'a>>(
+        &self,
+        cx: &mut C,
+    ) -> &RefCell<T>;
+}
+```
+
+This approach has several significant drawbacks:
+
+* Increases the API substantial
+* Adds an abstraction that not all users might need
+* Prevents implementing `Deref`
+
+Instead, Neon can lean on documentation to guide users towards `RefCell` if they need interior mutability.
+
+### Naming
+
+Several other names were considered:
+
+* `JsExternal`. Matches the name in N-API documentation (external reference); however, `cx.external(v)` might be confusing.
+* `JsRef`. Also, matches N-API but, does not match Rust naming conventions.
+* `JsCell`. Only appropriate for the `RefCell` approach.
+
+Overall, `JsBox<T>` behaves very similar to a `std::boxed::Box<T>`.
 
 ### Leverage existing borrow API
 
@@ -251,6 +336,6 @@ An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- Should we implement this for the legacy backend? We likely do not since this is a brand new API.
+- Should we implement this for the legacy backend? We likely will not since this is a brand new API.
 - Is it acceptable to let `JsBox::new` panic since it only fails when throwing or shutting down?
-- Can we store the underlying pointer in the `JsBox`? If so, we may be able to implement the `Deref` trait for increased ergonomics
+- Implementing `std::ops::Deref` depends on type checking prior to calls to `ValueInternal::from_raw` because it cannot fail. Missing a check is not unsafe, but could result in a panic.
