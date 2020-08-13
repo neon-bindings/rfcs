@@ -13,47 +13,47 @@
 
 Classes require a substantial amount of boilerplate and place a large amount of code inside of a macro. While feature rich, classes can be unergonomic for general use. In many cases, users only need a way to safely pass references across the FFI boundary.
 
-`JsBox` was [first suggested in 2017](https://github.com/neon-bindings/rfcs/issues/6#issuecomment-353403121). There is also evidence that multiple users of Neon only use classes as a thin wrapper, instead relying on glue code in javascript to create classes by composing methods.
+`JsBox` was [first suggested in 2017](https://github.com/neon-bindings/rfcs/issues/6#issuecomment-353403121). There is also evidence that multiple users of Neon only use classes as a thin wrapper, instead relying on glue code in JavaScript to create classes by composing methods.
 
 Example of boilerplate required to use a Neon Class as a thin wrapper:
 
 ```rust
 pub struct Person {
-	name: String,
+    name: String,
 }
 
 impl Person {
-	fn new(name: impl ToString) -> Self {
-		Person {
-			name: name.to_string(),
-		}
-	}
+    fn new(name: impl ToString) -> Self {
+        Person {
+            name: name.to_string(),
+        }
+    }
 
-	fn greet(&self) -> String {
-		format!("Hello, {}!", self.name)
-	}
+    fn greet(&self) -> String {
+        format!("Hello, {}!", self.name)
+    }
 }
 
 fn personGreet(mut cx: FunctionContext) -> JsResult<JsString> {
-	let person = cx.this().downcast::<JsPerson>().or_throw(&mut cx)?;
-	let greeting = {
-		let lock = cx.lock();
-		let person = person.borrow(&lock);
+    let person = cx.this().downcast::<JsPerson>().or_throw(&mut cx)?;
+    let greeting = {
+        let lock = cx.lock();
+        let person = person.borrow(&lock);
 
-		person.greet()
-	};
+        person.greet()
+    };
 
-	Ok(cx.string(greeting))
+    Ok(cx.string(greeting))
 }
 
 declare_types! {
-	pub class JsPerson for Person {
-		init(mut cx) {
-			let name = cx.argument::<JsString>(0)?.value();
+    pub class JsPerson for Person {
+        init(mut cx) {
+            let name = cx.argument::<JsString>(0)?.value();
 
-			Ok(Person::new(name))
-		}
-	}
+            Ok(Person::new(name))
+        }
+    }
 }
 ```
 
@@ -111,7 +111,7 @@ fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
 }
 ```
 
-The instance of `Pool` can be returned to Javascript using a `JsBox`. The `Pool` won't be dropped until the `JsBox` is garbage collected.
+The instance of `Pool` can be returned to JavaScript using a `JsBox`. The `Pool` won't be dropped until the `JsBox` is garbage collected.
 
 ```rust
 fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<Pool>> {
@@ -136,7 +136,7 @@ fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
 }
 ```
 
-Data may only be borrowed immutability. However, `RefCell` can be used to introduce interior mutability with dynamic borrow checking rules:
+Data may only be borrowed immutably. However, `RefCell` can be used to introduce interior mutability with dynamic borrow checking rules:
 
 ```rust
 fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Pool>>> {
@@ -147,7 +147,7 @@ fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Pool>>> {
 
 fn set_pool_size(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let size = cx.argument::<JsNumber>(1)?.value() as u32;
-    let mut pool = cx.argument::<JsPool<RefCell<Pool>>>(0)?;
+    let mut pool = cx.argument::<JsBox<RefCell<Pool>>>(0)?;
 
     pool.borrow_mut().set_size(size);
 
@@ -177,7 +177,7 @@ impl<T> JsBox where T: Send + 'static {
 }
 ```
 
-`JsBox` can be passed back and forth between Javascript and Rust like any other Js value.
+`JsBox` can be passed back and forth between JavaScript and Rust like any other Js value.
 
 
 #### `std::ops::Deref`
@@ -196,7 +196,9 @@ It is not possible to statically prove that two `JsBox<T>` do not alias the same
 
 #### `Send + 'static`
 
-`JsBox` are passed across threads and therefore must be `Send`. It is *not* necessary for `JsBox` to be `Sync` because they may only be borrowed on the main thread.
+Ownership of `JsBox` is moved to V8 and therefore the internal value must be `Send`. Requiring `Send` prevents passing values to other contexts that should remain local, for example an [`Rc`](https://doc.rust-lang.org/stable/std/rc/index.html). Most owned types are `Send` and this is a common restriction for multi-threaded applications.
+
+It is *not* necessary for `JsBox` to be `Sync` because they may only be borrowed on the main thread. The JavaScript engine guarantees that `JsBox` can't be accessed from multiple threads concurrently.
 
 ### `trait Context`
 
@@ -223,11 +225,17 @@ trait Context<'a> {
 * `napi_get_value_external()`. This API retrieves the external data pointer that was previously passed `to napi_create_external()`.
 * `napi_typeof()`. Returns `napi_external` if the type is an external type.
 
-*Note*: Passing an external created by another library, potentially even another neon library, is _undefined behavior_.
+##### Safety
 
-Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It should be incorporated into future designs; however, it is not included in this proposal.
+The `JsBox` API is not entirely safe. It relies on the user only passing N-API externals created within that Neon library. Passing an external created by another library, potentially even another neon library, is _undefined behavior_.
+
+It is *not* undefined behavior to attempt a value that is not an external as a `JsBox`. This will fail predictably. It **is** undefined behavior to downcast a non-`JsBox` externally because the pointer will be treated as if it is one.
+
+Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It would allow Neon to tag externals with an id that uniquely identifies that module to safely prevent downcasting if they are unrecognized. It should be incorporated into future designs; however, it is not included in this proposal.
 
 ##### Rust
+
+Internally, `JsBox` is represented as a boxed [`Any`](https://doc.rust-lang.org/std/any/) trait object. The `Any` trait provides type tagging to enable dynamic typing.
 
 ```rust
 // Outer box provides a single width pointer from the trait object
@@ -315,6 +323,24 @@ This approach has several significant drawbacks:
 
 Instead, Neon can lean on documentation to guide users towards `RefCell` if they need interior mutability.
 
+#### Future Expansion
+
+It may be beneficial for neon to export a `JsRefCell` type alias:
+
+```rust
+type JsRefCell<T> = JsBox<RefCell<T>>;
+```
+
+This type alias would provide a convenient place for Neon to document how to address interior mutability in a `JsBox`. It would be best to also include a `Context` method for creating it.
+
+```
+trait Context<'a> {
+    fn ref_cell<T: Send>(&mut self, v: T) -> JsRefCell<T> {
+        JsBox::new(RefCell::new(v))
+    }
+}
+```
+
 ### Naming
 
 Several other names were considered:
@@ -327,7 +353,7 @@ Overall, `JsBox<T>` behaves very similar to a `std::boxed::Box<T>`.
 
 ### Leverage existing borrow API
 
-An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) implementation exists. However, the current implementation has multiple soundness holes:
+An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) implementation exists. However, the current implementation has [multiple soundness holes](https://github.com/neon-bindings/neon/tree/kv/borrow-soundness):
 
 * `Buffer` can be mutably borrowed multiple times
 * `Lock` does not prevent overlapping memory regions
@@ -336,6 +362,6 @@ An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) 
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- Should we implement this for the legacy backend? We likely will not since this is a brand new API.
+- ~Should we implement this for the legacy backend? We likely will not since this is a brand new API.~
 - Is it acceptable to let `JsBox::new` panic since it only fails when throwing or shutting down?
 - Implementing `std::ops::Deref` depends on type checking prior to calls to `ValueInternal::from_raw` because it cannot fail. Missing a check is not unsafe, but could result in a panic.
