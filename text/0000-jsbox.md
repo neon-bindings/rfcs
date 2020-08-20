@@ -117,7 +117,7 @@ The instance of `Pool` can be returned to JavaScript using a `JsBox`. The `Pool`
 fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<Pool>> {
     let pool = Pool::new();
 
-    cx.boxed(pool)
+    Ok(cx.boxed(pool))
 }
 ```
 
@@ -142,7 +142,7 @@ Data may only be borrowed immutably. However, `RefCell` can be used to introduce
 fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Pool>>> {
     let pool = RefCell::new(Pool::new());
 
-    cx.boxed(pool)
+    Ok(cx.boxed(pool))
 }
 
 fn set_pool_size(mut cx: FunctionContext) -> JsResult<JsUndefined> {
@@ -173,7 +173,7 @@ impl<T> JsBox where T: Send + 'static {
     pub fn new<'a, C: Context<'a>>(
         cx: &mut C,
         v: T,
-    ) -> NeonResult<JsBox>;
+    ) -> Handle<'a, JsBox<T>>;
 }
 ```
 
@@ -359,9 +359,26 @@ An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) 
 * `Lock` does not prevent overlapping memory regions
 * Multiple [`Lock`](https://docs.rs/neon/0.4.0/neon/context/struct.Lock.html) can be created allowing aliased mutable borrows
 
-# Unresolved questions
-[unresolved]: #unresolved-questions
+# Open questions
+[open]: #open-questions
 
 - ~Should we implement this for the legacy backend? We likely will not since this is a brand new API.~
-- Is it acceptable to let `JsBox::new` panic since it only fails when throwing or shutting down?
+- ~Is it acceptable to let `JsBox::new` panic since it only fails when throwing or shutting down?~ Similar to other types `JsBox` will panic if the VM is is throwing.
 - Implementing `std::ops::Deref` depends on type checking prior to calls to `ValueInternal::from_raw` because it cannot fail. Missing a check is not unsafe, but could result in a panic.
+
+## `Lock` and `Borrow` APIs
+
+Neon has an existing API (`Lock`) for "locking" the VM and allowing borrows to native data. The `Lock` API allows borrows to two types of data:
+
+* `JsArrayBuffer`
+* Rust data wrapped in a `JsClass`
+
+When comparing the `Lock` API to `JsBox` there is an important distinction:
+
+* Rust data (`JsBox`) can be protected by Rust's Cell invariants, so we don't need to worry about reborrows via VM re-entrancy
+* C/C++ data (`JsArrayBuffer`) can't be protected by Rust's Cell invariants, so we do need to worry about reborrows via VM re-entrancy.
+
+Since the plan is to implement the classes using `JsBox`, the `Borrow` API that requires `Lock` will only be used for `JsArrayBuffer`. We may want to consider moving it from `neon::borrow::Borrow` to `neon::binary::Borrow` to clarify the relationship. Additionally, `Lock` / `Borrow` requires the following improvements for soundness:
+
+* Fix issue with the incorrect pointer being hashed for `JsArrayBuffer`
+* Enhance the `Ledger` to support regions of memory since `JsArrayBuffer` may overlap
