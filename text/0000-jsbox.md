@@ -229,9 +229,9 @@ trait Context<'a> {
 
 The `JsBox` API is not entirely safe. It relies on the user only passing N-API externals created within that Neon library. Passing an external created by another library, potentially even another neon library, is _undefined behavior_.
 
-It is *not* undefined behavior to attempt a value that is not an external as a `JsBox`. This will fail predictably. It **is** undefined behavior to downcast a non-`JsBox` externally because the pointer will be treated as if it is one.
+Attempting to downcast a `JsValue` that is not an external will fail predicably. However, attempting to downcast an external created by another native library **is** undefined behavior. This is due to a limitation in n-api.
 
-Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It would allow Neon to tag externals with an id that uniquely identifies that module to safely prevent downcasting if they are unrecognized. It should be incorporated into future designs; however, it is not included in this proposal.
+Progress is being made to add a [tagging feature](https://github.com/nodejs/node/pull/28237) to more safely unwrap externals. It would allow branding externals with a tag that uniquely identifies the module that created them. If available, it should be used in the implementation; however, it could be added later to close the safety hole.
 
 ##### Rust
 
