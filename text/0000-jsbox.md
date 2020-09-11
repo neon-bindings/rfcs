@@ -111,26 +111,47 @@ fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
 }
 ```
 
-The instance of `Pool` can be returned to JavaScript using a `JsBox`. The `Pool` won't be dropped until the `JsBox` is garbage collected.
+The instance of `Pool` can be placed in a struct (`Db`) that implements `Finalize`. The `Db` struct can be returned to JavaScript using a `JsBox`. The instance of `Db` won't be dropped until the `JsBox` is garbage collected.
 
 ```rust
-fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<Pool>> {
-    let pool = Pool::new();
+struct Db {
+    pool: Pool,
+}
 
-    Ok(cx.boxed(pool))
+impl Db {
+    fn new() -> Self {
+        Self { pool: Pool:new() }
+    }
+
+    fn pool(&self) -> &Pool {
+        &self.pool
+    }
+
+    fn pool_mut(&mut self) -> &mut Pool {
+        &mut self.pool
+    }
+}
+
+// Use the default implementations
+impl Finalize for Db {}
+
+fn create_db(mut cx: FunctionContext) -> JsResult<JsBox<Db>> {
+    let db = Db::new();
+
+    Ok(cx.boxed(db))
 }
 ```
 
-The `Pool` instance can later be borrowed:
+The `Db` instance can later be borrowed:
 
 _Note: Through `std::ops::Deref` and the magic of auto-deref, `JsBox<T>` can be treated as `&T`._
 
 ```rust
 fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
-    let pool = cx.argument::<JsBox<Pool>>(0)?;
+    let db = cx.argument::<JsBox<Db>>(0)?;
     let id = cx.argument::<JsNumber>(1)?.value();
 
-    let username = pool.get_by_id(id)
+    let username = db.pool().get_by_id(id)
 
     Ok(cx.string(username))
 }
@@ -138,18 +159,20 @@ fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
 
 Data may only be borrowed immutably. However, `RefCell` can be used to introduce interior mutability with dynamic borrow checking rules:
 
-```rust
-fn create_pool(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Pool>>> {
-    let pool = RefCell::new(Pool::new());
+## FIXME: Need to add a blanked impl of `Finalize` on common types like `RefCell`
 
-    Ok(cx.boxed(pool))
+```rust
+fn create_db(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Db>>> {
+    let db = RefCell::new(Db::new());
+
+    Ok(cx.boxed(db))
 }
 
 fn set_pool_size(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let size = cx.argument::<JsNumber>(1)?.value() as u32;
-    let mut pool = cx.argument::<JsBox<RefCell<Pool>>>(0)?;
+    let mut db = cx.argument::<JsBox<RefCell<db>>>(0)?;
 
-    pool.borrow_mut().set_size(size);
+    db.borrow_mut().pool_mut().set_size(size);
 
     Ok(cx.undefined())
 }
@@ -165,9 +188,9 @@ impl<T: Send + 'static> JsValue for JsBox<T> {}
 
 impl<T: Send + 'static> Managed for JsBox<T> {}
 
-impl<T: Send + 'static> ValueInternal for JsBox<> {}
+impl<T: Send + 'static> ValueInternal for JsBox<T> {}
 
-impl<T> JsBox where T: Send + 'static {
+impl<T> JsBox where T: Finalize + Send + 'static {
     /// This should only fail if the VM is in a throwing state or is
     /// in the process of stopping.
     pub fn new<'a, C: Context<'a>>(
@@ -199,6 +222,56 @@ It is not possible to statically prove that two `JsBox<T>` do not alias the same
 Ownership of `JsBox` is moved to V8 and therefore the internal value must be `Send`. Requiring `Send` prevents passing values to other contexts that should remain local, for example an [`Rc`](https://doc.rust-lang.org/stable/std/rc/index.html). Most owned types are `Send` and this is a common restriction for multi-threaded applications.
 
 It is *not* necessary for `JsBox` to be `Sync` because they may only be borrowed on the main thread. The JavaScript engine guarantees that `JsBox` can't be accessed from multiple threads concurrently.
+
+#### `Finalize`
+
+```rust
+trait Finalize: Sized {
+    fn finalize<'a, C: Context<'a>>(self, &mut cx: C) {
+        /* Default empty implementation */
+    }
+}
+```
+
+Types must implement `Finalize` in order to be wrapped in a `JsBox`. The `Finalize::finalize` method will be called from the JavaScript main thread immediately prior to garbage collection. The `Finalize` trait will be critical for use with [`Persistent`](https://github.com/neon-bindings/rfcs/pull/32).
+
+In order to improve ergonomics, `Finalize` can be implemented for many types in `std`.
+
+##### Simple Types
+
+```rust
+impl Finalize for String {}
+impl Finalize for u8 {}
+impl Finalize for u16 {}
+
+/* ... */
+```
+
+##### Containers
+
+```rust
+impl<T: Finalize> Finalize for Vec<T> {
+    fn finalize<'a, C: Context<'a>>(self, &mut cx: C) {
+        for item in self.into_iter() {
+            item.finalize(self);
+        }
+    }
+}
+
+/* ... */
+```
+
+##### Smart Pointers
+
+```rust
+impl<T: Finalize> Finalize for Box<T> {
+    fn finalize<'a, C: Context<'a>>(self, &mut cx: C) {
+        (*self).finalize(cx);
+    }
+}
+
+/* ... */
+```
 
 ### `trait Context`
 
@@ -359,12 +432,22 @@ An existing [`neon::borrow`](https://docs.rs/neon/0.4.0/neon/borrow/index.html) 
 * `Lock` does not prevent overlapping memory regions
 * Multiple [`Lock`](https://docs.rs/neon/0.4.0/neon/context/struct.Lock.html) can be created allowing aliased mutable borrows
 
+### Optional `Finalize`
+
+`Finalize` could be made optional in by providing a wrapper type (similar to `UnwindSafe`) or by providing multiple constructors to `JsBox`. The issue with this approach is that it moves safety checks from the struct definition to instance creation. This increases the risk of a leak or missed call.
+
+Ideally we would provide a default implementation for all `T`, but this is blocked by [specialization](https://github.com/rust-lang/rust/issues/31844).
+
+We could also encourage correct usage with a `box!` macro that leverages [`impls`](https://github.com/nvzqz/impls) crate. However, this increases complexity and creates an unergonomic API for creating boxes that is different from all other types which can be created from a method on `Context`.
+
 # Open questions
 [open]: #open-questions
 
 - ~Should we implement this for the legacy backend? We likely will not since this is a brand new API.~
 - ~Is it acceptable to let `JsBox::new` panic since it only fails when throwing or shutting down?~ Similar to other types `JsBox` will panic if the VM is is throwing.
-- Implementing `std::ops::Deref` depends on type checking prior to calls to `ValueInternal::from_raw` because it cannot fail. Missing a check is not unsafe, but could result in a panic.
+- Implementing `std::ops::Deref` depends on type checking prior to calls to `ValueInternal::from_raw` because it cannot fail. Missing a check is not unsafe, but could result
+- To prevent users from needing to implement `Finalize` and to optimize away empty calls of `finalize` (possibly done by llvm), should we add a `box!(&mut cx, T)` macro?
+
 
 ## `Lock` and `Borrow` APIs
 
