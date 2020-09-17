@@ -106,7 +106,13 @@ There's some loss of simplicity in the source code from `require('addon')` to `p
 
 We could build all the tooling through Cargo generators (e.g. with the [cargo-generate](https://github.com/ashleygwilliams/cargo-generate) Cargo addon). This would double down on the idea that Neon is about using Rust in your Node projects.
 
-However, on the outside, a Neon project _is_ a JS package, and you still need to use npm e.g. to install dependencies or to publish to the registry. So it makes sense to use `npm init` for creating a Neon project and `npm i` for building the project (including fetching and building any dependencies it may have). However, it's still useful for `cargo build` to work 
+However, on the outside, a Neon project _is_ a JS package, and you still need to use npm e.g. to install dependencies or to publish to the registry. So it makes sense to use `npm init` for creating a Neon project and `npm i` for building the project (including fetching and building any dependencies it may have). However, it's still useful for `cargo build` to work in the root directory for convenience, especially for cases where the user may add additional build logic to `npm install` but still want to be able to just build the Rust code by itself.
+
+We could use an `@neon` namespace instead of `create-neon-lib` etc. However, this makes for a noisier and less convenient-to-type command-line experience:
+```
+npm init @neon/app my-app
+```
+(Note that as a _programming_ syntax, this might arguably be preferable for the visual distinction. But the command-line is meant to be quick and easy to type and remember.) Another option would be to support both as aliases for each other, but this might just overwhelm users with pointless choices.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
@@ -116,3 +122,15 @@ However, on the outside, a Neon project _is_ a JS package, and you still need to
   * `cargo build --all`?
   * `cargo build` by shelling out to `cargo build` in the right subdirectory?
   * Flatten the directory structure so the root directory is both a Node package and a Rust crate? (This is an attractive option, as it simplifies the directory structure e.g. in the tree view of an IDE, and generally may make the cognitive load of a Neon project feel lighter.)
+- On the topic of lightening the directory layout, should we also put the `index.js` into the root directory? This might look like:
+```
+my-app
+├── Cargo.lock
+├── Cargo.toml
+├── index.js
+├── node_modules
+├── package-lock.json
+├── package.json
+└── src
+    └── lib.rs
+```
