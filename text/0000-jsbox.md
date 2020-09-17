@@ -159,8 +159,6 @@ fn get_user(mut cx: FunctionContext) -> JsResult<JsString> {
 
 Data may only be borrowed immutably. However, `RefCell` can be used to introduce interior mutability with dynamic borrow checking rules:
 
-## FIXME: Need to add a blanked impl of `Finalize` on common types like `RefCell`
-
 ```rust
 fn create_db(mut cx: FunctionContext) -> JsResult<JsBox<RefCell<Db>>> {
     let db = RefCell::new(Db::new());
@@ -239,13 +237,7 @@ In order to improve ergonomics, `Finalize` can be implemented for many types in 
 
 ##### Simple Types
 
-```rust
-impl Finalize for String {}
-impl Finalize for u8 {}
-impl Finalize for u16 {}
-
-/* ... */
-```
+Simple types such as `u8` and `String` are likely of less value and will be omitted on the initial implementation. Adding implementations later is forward compatible.
 
 ##### Containers
 
@@ -264,6 +256,12 @@ impl<T: Finalize> Finalize for Vec<T> {
 ##### Smart Pointers
 
 ```rust
+impl<T: Finalize> Finalize for RefCell<T> {
+    fn finalize<'a, C: Context<'a>>(self, &mut cx: C) {
+        self.into_inner().finalize(cx);
+    }
+}
+
 impl<T: Finalize> Finalize for Box<T> {
     fn finalize<'a, C: Context<'a>>(self, &mut cx: C) {
         (*self).finalize(cx);
