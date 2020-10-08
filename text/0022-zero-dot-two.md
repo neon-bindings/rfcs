@@ -36,7 +36,7 @@ The primary changes are:
 
 ### `ArrayBuffer` views
 
-See: [`ArrayBuffer` views RFC](https://github.com/neon-bindings/rfcs/blob/master/text/0005-array-buffer-views.md)
+See: [`ArrayBuffer` views RFC](https://github.com/neon-bindings/rfcs/blob/main/text/0005-array-buffer-views.md)
 
 #### Migration guide
 

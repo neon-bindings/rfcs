@@ -6,12 +6,12 @@
 # Summary
 [summary]: #summary
 
-[RFC 25](https://github.com/neon-bindings/rfcs/blob/master/text/0025-event-handler.md) introduced a powerful new API for transmitting a JavaScript event handler to other Rust threads so that they can asynchronously signal events back to the main JavaScript thread. This RFC proposes a modification to the API to make the event handler's callback protocol both **simpler to understand** and **safe for handling JavaScript exceptions** that can occur while preparing the call the callback.
+[RFC 25](https://github.com/neon-bindings/rfcs/blob/main/text/0025-event-handler.md) introduced a powerful new API for transmitting a JavaScript event handler to other Rust threads so that they can asynchronously signal events back to the main JavaScript thread. This RFC proposes a modification to the API to make the event handler's callback protocol both **simpler to understand** and **safe for handling JavaScript exceptions** that can occur while preparing the call the callback.
 
 # Motivation
 [motivation]: #motivation
 
-[RFC 25](https://github.com/neon-bindings/rfcs/blob/master/text/0025-event-handler.md) introduced a powerful new API for transmitting a JavaScript event handler to other Rust threads so that they can asynchronously signal events back to the main JavaScript thread.
+[RFC 25](https://github.com/neon-bindings/rfcs/blob/main/text/0025-event-handler.md) introduced a powerful new API for transmitting a JavaScript event handler to other Rust threads so that they can asynchronously signal events back to the main JavaScript thread.
 
 However, in that design, the Rust code that prepares the results to send to the event handler has no way to manage operations that can trigger JavaScript exceptions. This shows up even in the simple examples in that RFC, which are forced to use `.unwrap()` to deal with `NeonResult` values:
 
