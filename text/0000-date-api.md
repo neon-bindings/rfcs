@@ -57,6 +57,19 @@ The `JsDate` type is also an object type:
 impl Object for JsDate { /* ... */ }
 ```
 
+## Context method
+
+We also add a convenience method to the `Context` trait:
+
+```rust
+pub trait Context<'a> {
+    // ...
+    fn date<V: Into<f64>>(&mut self, value: V) -> Handle<'a, JsDate>;
+}
+```
+
+The behavior of `cx.date(value)` is equivalent to `JsDate::new(&mut cx, value)`.
+
 # Critique
 [critique]: #critique
 
