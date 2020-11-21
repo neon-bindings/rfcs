@@ -34,6 +34,9 @@ This API adds a `JsDate` type to `neon::types`:
 
 ```rust
 impl JsDate {
+    pub const MIN_VALID_VALUE: f64 = -8640000000000000;
+    pub const MAX_VALID_VALUE: f64 = 8640000000000000;
+
     pub fn new<'a, C: Context<'a>, V: Into<f64>>(_: &mut S, value: V) -> JsResult<JsDate>;
     pub fn value<'a, C: Context<'a>>(self, cx: &mut C) -> f64;
     pub fn is_valid<'a, C: Context<'a>>(self, cx: &mut C) -> bool;
@@ -43,6 +46,8 @@ impl JsDate {
 Like [`neon::types::JsNumber`](https://docs.rs/neon/0.4.0/neon/types/struct.JsNumber.html), the constructor accepts any type coercible to `f64`.
 
 The `is_valid()` convenience method checks whether the `value()` of a `Date` object is in the [legal time range](https://www.ecma-international.org/ecma-262/11.0/index.html#sec-time-values-and-time-range) of -8640000000000000 to 8640000000000000 (inclusive).
+
+The [associated constants](https://doc.rust-lang.org/edition-guide/rust-2018/trait-system/associated-constants.html) `MIN_VALID_VALUE` and `MAX_VALID_VALUE` represent the minimum and maximum legal `JsDate` values, respectively.
 
 ## Dates are objects
 
