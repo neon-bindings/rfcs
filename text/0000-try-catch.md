@@ -63,24 +63,16 @@ pub trait Context<'a> {
     // N-API only
     fn is_throwing(&self) -> bool;
 
-    fn try_catch<'b: 'a, T, F>(&mut self, f: F) -> Result<Handle<'a, T>, Handle<'a, JsValue>>
+    fn try_catch<T, F>(&mut self, f: F) -> Result<T, Handle<'a, JsValue>>
     where
-        T: Value,
-        F: FnOnce(&mut Self) -> JsResult<'b, T>;
+        T: Sized,
+        F: FnOnce(&mut Self) -> JsResult<'a, T>;
 }
 ```
 
 The `is_throwing` method can be implemented with the N-API [`napi_is_exception_pending`](https://nodejs.org/api/n-api.html#n_api_napi_is_exception_pending) method in the upcoming N-API backend. If the implementation would be too complicated, this method may not be supported with the legacy backend.
 
 The `try_catch` method can be implemented with the N-API [`napi_get_and_clear_last_exception`](https://nodejs.org/api/n-api.html#n_api_napi_get_and_clear_last_exception), or with [`Nan::TryCatch`](https://github.com/nodejs/nan/blob/master/doc/errors.md#api_nan_try_catch) in the legacy backend.
-
-For the legacy backend, the type parameter `F` has an additional constraint:
-
-```rust
-F: std::panic::UnwindSafe
-```
-
-This restriction can be lifted for the N-API backend, which is a backwards-compatible change.
 
 If the callback to `try_catch` produces `Err(Throw)` but the VM is not actually in a throwing state, the `try_catch` function panics.
 
