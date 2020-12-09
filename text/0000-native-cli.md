@@ -92,12 +92,8 @@ We can simplify the combinatorics with a few observations:
 3. Nesting an addon within an existing project is likely a less common case, or at least a case where people can reasonably expected to pass additional information to `npm init neon` in a command-line flag.
 
 ```
-npm init neon [name] [--workspace [root] | --submodule [root]]
+npm init neon [name] [--submodule [root]]
 
-  --workspace: Specify a root directory to serve as the workspace
-               root of this package.
-               Default: Nearest ancestor directory containing a
-                        package.json file.
   --submodule: Specify a root directory to serve as the package root
                of this module. The module will not contain its own
                package.json but instead only be accessible to consumers
@@ -106,7 +102,16 @@ npm init neon [name] [--workspace [root] | --submodule [root]]
                         package.json file.
 ```
 
+As the JavaScript ecosystem develops conventions for [workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces), we could eventually add an additional optional flag for adding a Neon module to a workspace:
 
+```
+  --workspace: Specify a root directory to serve as the workspace
+               root of this package.
+               Default: Nearest ancestor directory containing a
+                        package.json file.
+```
+
+For now, we leave this to future work since the ecosystem hasn't yet fully developed the interoperability story for [npm workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces), [Yarn workspaces](https://classic.yarnpkg.com/en/docs/workspaces/), [pnpm workspaces](https://pnpm.js.org/en/workspaces), and [Lerna](https://github.com/lerna/lerna).
 
 # Drawbacks
 [drawbacks]: #drawbacks
