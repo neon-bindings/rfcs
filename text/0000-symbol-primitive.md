@@ -19,13 +19,13 @@ Currently, the `Symbol` function and primitive object wrapper API is available [
 Constructing a `JsSymbol`:
 ```rust
 // symbol with a description
-let symbol = JsSymbol::new(&mut cx, Some("foo"));
+let symbol = JsSymbol::with_description(&mut cx, "foo");
 
 // symbol without a description
-let symbol = JsSymbol::new(&mut cx, None::<&str>);
+let symbol = JsSymbol::new(&mut cx);
 
-// convenience construction method on Context
-let symbol = cx.symbol(Some("foo"));
+// convenience construction method on Context for the common case of `with_description`
+let symbol = cx.symbol("foo");
 ```
 
 As with other primitives, we can type check it:
@@ -39,11 +39,11 @@ fn is_symbol(mut cx: FunctionContext) -> JsResult<JsBoolean> {
 
 Unlike many other primitives, `JsSymbol` doesn't have a `value` method to convert to a Rust type. However, it has a `description` method that returns the underlying `Symbol.prototype.description` instance property:
 ```rust
-let symbol = JsSymbol::new(&mut cx, Some("foo"));
+let symbol = JsSymbol::with_description(&mut cx, "foo");
 let description = symbol.description(&mut cx);
 assert_eq!(description, Some("foo".to_owned()));
 
-let symbol_without_description = JsSymbol::new(&mut cx, None::<&str>);
+let symbol_without_description = JsSymbol::new(&mut cx);
 let description = symbol_without_description.description(&mut cx);
 assert_eq!(description, None);
 ```
@@ -52,7 +52,7 @@ assert_eq!(description, None);
 [reference-level-explanation]: #reference-level-explanation
 
 #### JsSymbol
-- `new` would be implemented using [napi_create_symbol](https://nodejs.org/docs/latest-v14.x/api/n-api.html#n_api_napi_create_symbolhttps://nodejs.org/docs/latest-v14.x/api/n-api.html#n_api_napi_create_symbol) (as well as the v8 equivalent for the legacy-api)
+- `new` would be implemented using [napi_create_symbol](https://nodejs.org/docs/latest-v14.x/api/n-api.html#n_api_napi_create_symbol)
 - `description` would use the [existing implementation](https://github.com/neon-bindings/neon/blob/5f6481a53203580c3a301be02567a502de53e871/crates/neon-runtime/src/napi/object.rs#L110-L114) for napi_get_property
 - `is_typeof` would leverage the [existing implementation](https://github.com/neon-bindings/neon/blob/main/crates/neon-runtime/src/napi/tag.rs#L5-L9) for typechecking, with a `napi::ValueType::Symbol`
 ```rust
@@ -61,8 +61,8 @@ assert_eq!(description, None);
 pub struct JsSymbol(raw::Local);
 
 impl JsSymbol {
-    pub fn new<'a, C: Context<'a>, S: AsRef<str>>(cx: &mut C, description: Option<S>) -> Handle<'a, JsSymbol>;
-
+    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> Handle<'a, JsSymbol>;
+    pub fn with_description<'a, C: Context<'a>, S: AsRef<str>>(cx: &mut C, s: S) -> Handle<'a, JsSymbol>;
     pub fn description<'a, C: Context<'a>>(self, cx: &mut C) -> Option<String>;
 }
 
@@ -83,38 +83,19 @@ impl ValueInternal for JsSymbol {
 }
 ```
 
-`Context` would be modified to add a convenience method for constructing a `JsSymbol`: 
+`Context` would be modified to add a convenience method for constructing a `JsSymbol` with a description: 
 ```rust
 trait Context<'a>: ContextInternal<'a> {
-    fn symbol<S: AsRef<str>>(&mut self, s: Option<S>) -> Handle<'a, JsSymbol> {
-        JsSymbol::new(self, s)
+    fn symbol<S: AsRef<str>>(&mut self, s: S) -> Handle<'a, JsSymbol> {
+        JsSymbol::with_description(self, s)
     }
 }
 ```
 
 NOTE: Node 10.23 [does not support](https://node.green/#ES2019-misc-Symbol-prototype-description) `Symbol.prototype.description`, so I believe this would need to be feature-flagged.
 
-# Rationale and alternatives
-[alternatives]: #alternatives
-
-The proposed `new` function has the caveat that you need to add a type annotation to the `None` variant. I'm unsure of how commonplace it is to construct symbols without descriptions. It might be worth considering two constructors, allowing users to skip wrapping the description in `Option`.
-```rust
-impl JsSymbol {
-    pub fn new<'a, C: Context<'a>, S: AsRef<str>>(cx: &mut C, s: S) -> Handle<'a, JsSymbol>;
-    pub fn new_without_description<'a, C: Context<'a>>(cx: &mut C) -> Handle<'a, JsSymbol>;
-    pub fn description<'a, C: Context<'a>>(self, cx: &mut C) -> Option<String>;
-}
-
-trait Context<'a>: ContextInternal<'a> {
-    fn symbol<S: AsRef<str>>(&mut self, s: S) -> Handle<'a, JsSymbol> {
-        JsSymbol::new(self, s)
-    }
-}
-```
-
-
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
 This RFC does not currently propose anything for the `Symbol` object wrapper API, which includes Well-Known Symbols and the Symbol global registry (`Symbol.for()`/`Symbol.keyFor()`). 
-These are available using the workaround linked above. While this proposal could be extended to include those, the primary goal for this RFC was to work towards completeness in typechecking. 
+These are available using the workaround linked above.
