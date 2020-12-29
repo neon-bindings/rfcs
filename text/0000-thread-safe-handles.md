@@ -85,7 +85,7 @@ fn log(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-### `neon::handle::EventQueue`
+### `neon::task::EventQueue`
 
 Once a value is wrapped in a `Root<_>`, it must be sent back to the JavaScript that created it to unwrap. `EventQueue` provides a mechanism for requesting work be performed on a JavaScript thread.
 
@@ -401,7 +401,7 @@ The idiomatic way to create an `EventQueue` is from a `Context.
 
 ```rust
 trait Context<'a> {
-    fn event_queue(&mut self) -> EventQueue {
+    fn queue(&mut self) -> EventQueue {
         EventQueue::new(self)
     }
 }
