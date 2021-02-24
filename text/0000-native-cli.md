@@ -6,16 +6,18 @@
 # Summary
 [summary]: #summary
 
-This RFC proposes making it possible to use Neon with only standard CLI tools: `npm` for JavaScript workflows, and `cargo` for Rust workflows. This should lighten the cognitive burden of learning Neon, make it easier to learn, and generally feel like an even simpler end-to-end user experience.
+This RFC proposes streamlining the directory layout and command-line UX of Neon projects, making the design simpler, more intuitive, and easier to learn and adopt.
 
 # Motivation
 [motivation]: #motivation
 
-Historically, we created the `neon` command-line tool as a wrapper around the `npm` and `cargo` command-line tools to eliminate repetitive manual steps in the project creation and build steps. Excitingly, it appears there are enough extensibility points in these tools to be able to allow Neon users to use the native tooling for the usual workflows. This should have the following benefits:
+This RFC proposes three simplifications to the Neon design:
 
-- Learnability: New Neon users can use the `npm` commands they're already used to, without having to learn another CLI tool.
-- Adoption: Lowering the barrier to entry should decrease a deterrence from adoption of Neon.
-- Maintainability: Neon users no longer need to worry about maintaining the right version of `neon` installed globally, and can just rely on the `npm` and `cargo` tools they already have installed on their system.
+- **Simplified model:** A Neon project is no longer a JavaScript package that _contains_ a native module; a Neon project _is just_ a native module.
+- **Simplified CLI:** Using Neon no longer requires learning a custom CLI tool; Neon projects are operated with the standard `npm` and `cargo` tools.
+- **Simplified layout:** A Neon project no longer contains a mix of JS and Rust subdirectory structures; it's flattened into a standard Cargo project + a `package.json` to treat it as a Node native module.
+
+This design lightens the cognitive burden of learning Neon, making it less intimidating for new users and easier to use for everyone.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
@@ -24,11 +26,23 @@ Historically, we created the `neon` command-line tool as a wrapper around the `n
 
 The `npm init neon` command makes it easy to start a new Neon project. You can use `npm init neon my-app` to create a new `my-app` Neon directory, or `npm init neon` to initialize an existing directory as a Neon project.
 
+## Neon project layout
+
+A Neon project looks like a typical Rust project that you might create with `cargo new`, but it also contains a `package.json` manifest with the proper npm scripts to build the project as a Node module with `npm install`. After building, a Neon project directory looks like this:
+
+```
+├── Cargo.toml
+├── README.md
+├── build.rs
+├── index.node
+├── package.json
+└── src
+    └── lib.rs
+```
+
 ## Building a Neon project
 
-Once you've created a standard Neon project, the repo is set up to allow you to do a complete build from source with the `install` script, meaning that all you have to do to build your project is the standard `npm install` (or `npm i` for short) command from the project root.
-
-If you look at your `package.json`, you'll see that the install script delegates to Rust's `cargo` tool to build your module from source. You can do this directly yourself from the project root with standard Rust commands: `cargo build` for a debug build, or `cargo build --release` for a release build.
+The `package.json` contains an `install` script that runs `cargo build` to build the module from Rust source, and then copies the result into `index.node` in the project root. You can do a complete build from source with the `install` script by running `npm install` (or `npm i` for short) at the command-line. (You can also run the build manually with `cargo build` or `cargo build --release`, but then you will have to find the generated library and copy it manually into `./index.node` yourself.)
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -42,81 +56,31 @@ The reason we can now move past `neon new` is that `npm` has added support for c
 There are a couple of key developments that will allow us to move past `neon build`:
 
 1. Once we move to the [N-API backend](https://github.com/neon-bindings/neon/issues/444), we no longer need to invalidate a Neon build when changing between versions of Node. This means we won't need to use the custom invalidation logic (which has proved to be fragile and a source of user frustration).
-2. We discovered that we can skip the final step of copying the built DLL into a `.node` file by setting a `rustc` flag via Cargo [build flag instructions](https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-cdylib-link-arg) from within `build.rs`:
-
-```rust
-let manifest_dir = env::var_os("CARGO_MANIFEST_DIR").unwrap();
-let output = Path::new(&manifest_dir).join("index.node");
-
-println!("cargo:rustc-cdylib-link-arg=-o");
-println!("cargo:rustc-cdylib-link-arg={}", output.display());
+2. For the final step of copying the built DLL into a `.node` file, we can create a narrower CLI tool that's not intended for end-user use, but just for the `package.json`'s npm scripts to call into. We have built a simple tool called [`cargo-cp-artifact`](https://github.com/neon-bindings/cargo-cp-artifact/). This command can be used with a standard `cargo build` command to capture the name of the generated DLL and copy it to `index.node`. The syntax would look something like:
+```json
+{
+  "scripts": {
+    "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics"
+  },
+  "devDependencies": {
+    "cargo-cp-artifact": "^0.1"
+  }
+}
 ```
-3. Because of the ABI and API stability of N-API, none of the `electron-build-env` settings should be needed for setting custom targets or header files for Electron builds. And with [delayed loading](https://github.com/neon-bindings/neon/issues/584), we should also be able to avoid needing custom `.lib` files for Windows Electron builds as well.
-
-## Enabling `cargo build`
-
-We should make it a goal to make `cargo build` work as a standard way of building a Neon project from source (of course, `npm install` should work as always, too). We have a couple of options for what this might look like.
-
-One approach is to put a `Cargo.toml` in the root directory that defines a [Cargo workspace](https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html).
-
-Another option is to try flattening the directory structure so that the Cargo directory _is_ the root directory.
-
-Experimenting with implementations will help us get hands-on impressions of the developer experience of the various options.
+3. Because of the ABI and API stability of N-API, none of the `electron-build-env` settings should be needed for setting custom targets or header files for Electron builds. And with [dynamic loading](https://github.com/neon-bindings/neon/pull/646), we should also be able to avoid needing custom `.lib` files for Windows Electron builds as well.
 
 ## Flattening Neon project layout
 
 Historically, `neon new` generated a project layout that assumed that the addon should always be a submodule of a pure-JS wrapper module. This incurs some cognitive overhead for understanding the directory layout, and it's not clear the wrapper structure is actually providing value in the common case.
 
-Breaking down the design space, there are several dimensions that determine the context in which a user wants a Neon source tree:
+Making things even more confusing, there were differences between how you would use Neon for an app, a library, or an Electron app.
 
-- Is the public deliverable a Node app, an Electron app, or a library?
-- Does the addon define a published package (i.e., with its own `package.json`) or a submodule (i.e., without its own `package.json`) of a containing package?
-  - If it's a published package, is it nested within a monorepo or in its own separate repo?
-
-We can simplify the combinatorics with a few observations:
-
-1. In general, the addon directory should have the following structure:
-
-```
-├── Cargo.toml
-├── README.md
-├── build.rs
-├── index.node
-├── package.json
-└── src
-    └── lib.rs
-```
-
-2. Node apps and Electron apps shouldn't need to be any different with the N-API backend.
-
-3. Nesting an addon within an existing project is likely a less common case, or at least a case where people can reasonably expected to pass additional information to `npm init neon` in a command-line flag.
-
-```
-npm init neon [name] [--submodule [root]]
-
-  --submodule: Specify a root directory to serve as the package root
-               of this module. The module will not contain its own
-               package.json but instead only be accessible to consumers
-               as a submodule of the parent package.
-               Default: Nearest ancestor directory containing a
-                        package.json file.
-```
-
-As the JavaScript ecosystem develops conventions for [workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces), we could eventually add an additional optional flag for adding a Neon module to a workspace:
-
-```
-  --workspace: Specify a root directory to serve as the workspace
-               root of this package.
-               Default: Nearest ancestor directory containing a
-                        package.json file.
-```
-
-For now, we leave this to future work since the ecosystem hasn't yet fully developed the interoperability story for [npm workspaces](https://docs.npmjs.com/cli/v7/using-npm/workspaces), [Yarn workspaces](https://classic.yarnpkg.com/en/docs/workspaces/), [pnpm workspaces](https://pnpm.js.org/en/workspaces), and [Lerna](https://github.com/lerna/lerna).
+We can simplify all of these by eliminating the wrapper entirely, and just creating a super simple project structure that's easy enough to understand that users can feel comfortable understanding and modifying it themselves. And the fact that Electron no longer needs custom builds eliminates the need for custom boilerplate generation for those cases.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Some users report liking the `neon` CLI. But we don't actually need to eliminate it, and should at least continue to support it for some time in order to avoid disrupting users. Over time, we can decide whether it's becoming less popular. But there's really no need to couple the decision of what to do with `neon` to the decision of whether to do this RFC. Deprecation and removal is a separate question.
+Some users report liking the `neon` CLI. We don't need to be in a big hurry to eliminate it, and should at least continue to support it for some time in order to avoid disrupting users. Over time, we can decide whether it's becoming less popular. But there's really no need to couple the decision of what to do with `neon` to the decision of whether to do this RFC. Deprecation and removal are separate questions.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
@@ -136,10 +100,4 @@ npm init @neon/app my-app
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- What other build invalidation logic, if any, do we still need to add? Can this all be done within `build.rs`? We should review the `neon build` invalidation logic and check for anything this RFC has overlooked.
-- ~~What is the best way for `cargo build` to work in the root?~~
-  * ~~`cargo build --all`?~~
-  * ~~`cargo build` by shelling out to `cargo build` in the right subdirectory?~~
-  * ~~Flatten the directory structure so the root directory is both a Node package and a Rust crate? (This is an attractive option, as it simplifies the directory structure e.g. in the tree view of an IDE, and generally may make the cognitive load of a Neon project feel lighter.)~~
-- ~~On the topic of lightening the directory layout, should we also put the `index.js` into the root directory?~~
-- For nested directory structures like `--workspace` and `--submodule`, will Rust-Analyzer get confused in IDEs when the `Cargo.toml` isn't in the project root? Should the default behavior also create a Cargo workspace in the repo root in order to make that work? If not default, should we add an opt-in parameter to configure a Cargo workspace for that?
+None.
