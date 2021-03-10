@@ -24,13 +24,14 @@ This design lightens the cognitive burden of learning Neon, making it less intim
 
 ## Creating a new Neon project
 
-The `npm init neon` command makes it easy to start a new Neon project. You can use `npm init neon` to initialize a Neon project directory.
+The `npm init neon` command makes it easy to start a new Neon project. You can use `npm init neon <name>` to create a new directory _name_, containing a simple but fully working Neon project.
 
 ## Neon project layout
 
-A Neon project looks like a typical Rust project that you might create with `cargo new`, but it also contains a `package.json` manifest with the proper npm scripts to build the project as a Node module with `npm install`. Using `npm init neon`, an initial Neon project directory looks like this:
+A Neon project looks like a typical Rust project that you might create with `cargo new`, but it also contains a `package.json` manifest with the proper npm scripts to build the project as a Node module with `npm install`. Using `npm init neon <name>`, an initial Neon project directory looks like this:
 
 ```
+<name>
 ├── .gitignore
 ├── Cargo.toml
 ├── README.md
@@ -42,6 +43,7 @@ A Neon project looks like a typical Rust project that you might create with `car
 After running a build with `npm install`, the project also contains build artifacts and lockfiles:
 
 ```
+<name>
 ├── .gitignore
 ├── Cargo.lock
 ├── Cargo.toml
@@ -112,6 +114,10 @@ We could use an `@neon` namespace instead of `create-neon-lib` etc. However, thi
 npm init @neon/app my-app
 ```
 (Note that as a _programming_ syntax, this might arguably be preferable for the visual distinction. But the command-line is meant to be quick and easy to type and remember.) Another option would be to support both as aliases for each other, but this might just overwhelm users with pointless choices.
+
+We could offer a zero-argument version of `create-neon`, which would initialize an existing project. However, this approach irrevocably modifies a user's existing directory structure, which can leave them in a painful intermediate state on failure. It's a more robust and less stressful user experience to know that `create-neon` will only ever build a new directory structure from scratch, and if anything goes wrong it's safe to delete the generated directory and start over.
+
+Moreover, despite the historical behavior of `npm init`, this approach of generating a new directory structure from scratch is standard practice these days not only in the Rust ecosystem (with `cargo new`), but in the JS ecosystem as well with tools like [`create-react-app`](https://create-react-app.dev)—which was in fact the tool that inspired the extensibility of `npm init`. So we appear to be safely within the bounds of idiomatic JS tooling behavior.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
