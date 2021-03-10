@@ -108,7 +108,7 @@ In this proposed code, the trait is implemented for `Result` types where the err
 
 > This section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
 
-In the second example under [Guide-level explanation], we create a new `Result` if either of the `File::create` or `file.write_all` functions return an error. We call `to_string` on the original error and pass the string to `cx.throw_error` method, so that this text is available in the `Error` object thrown in JavaScript. `or_throw` achieves the same result with less repetitive code.
+In the second example under [Guide-level explanation](#guide-level-explanation), we create a new `Result` if either of the `File::create` or `file.write_all` functions return an error. We call `to_string` on the original error and pass the string to `cx.throw_error` method, so that this text is available in the `Error` object thrown in JavaScript. `or_throw` achieves the same result with less repetitive code.
 
 # Drawbacks
 
@@ -117,7 +117,7 @@ In the second example under [Guide-level explanation], we create a new `Result` 
 - Developers using Neon could trivially implement this themselves
 - Isn't that much shorter than using `or_else`
 - Isn't useful if a developer wants to write a custom error message
-- Only supports JS `Error` (see [Unresolved questions])
+- Only supports JS `Error` (see [Unresolved questions](#unresolved-questions))
 
 # Rationale and alternatives
 
