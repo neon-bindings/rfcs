@@ -15,7 +15,7 @@ This RFC proposes a new trait `ResultExt` with an implementation for `std::resul
 
 This feature would allow developers using Neon to call functions from `std` or third party libraries which return `Result`, and properly handle errors which may occur by converting these to `NeonResult` without needing to write their own boilerplate code, or repetitive code in function bodies.
 
-Currently, developers using Neon with non-Neon `Result`-returning functions either have to implement a similar trait themselves, or write something like the following on a line-by-line basis, which is rather terse:
+Currently, developers using Neon with non-Neon `Result`-returning functions either have to implement a similar trait themselves, or write something like the following on a line-by-line basis, which is rather verbose:
 
 ```rust
 do_something().or_else(|e| cx.throw_error(e.to_string()))?
@@ -115,7 +115,7 @@ In the second example under [Guide-level explanation](#guide-level-explanation),
 [drawbacks]: #drawbacks
 
 - Developers using Neon could trivially implement this themselves
-- Isn't that much shorter than using `or_else`
+- Only benefit over using `or_else` is length + less verbosity
 - Isn't useful if a developer wants to write a custom error message
 - Only supports JS `Error` (see [Unresolved questions](#unresolved-questions))
 
