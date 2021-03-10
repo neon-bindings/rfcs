@@ -1,4 +1,4 @@
-- Feature Name: native_cli
+- Feature Name: streamlined_ux
 - Start Date: 2020-09-17
 - RFC PR: (leave this empty)
 - Neon Issue: (leave this empty)
