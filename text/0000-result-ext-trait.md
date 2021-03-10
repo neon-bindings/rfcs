@@ -125,7 +125,7 @@ In the second example under [Guide-level explanation](#guide-level-explanation),
 
 > Why is this design the best in the space of possible designs?
 
-I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors as it does not require repetitive code.
+I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors as it requires the least amount of repetitive code.
 
 As I understand, it is not possible to automatically convert these errors because the context object is needed to create a JavaScript error, although this would be ideal if possible.
 
