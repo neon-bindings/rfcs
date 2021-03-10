@@ -125,7 +125,9 @@ In the second example under [Guide-level explanation], we create a new `Result` 
 
 > Why is this design the best in the space of possible designs?
 
-I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors. As I understand, it is not possible to automatically convert these errors because the context object is needed to create a JavaScript error, although this would be ideal if possible.
+I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors as it does not require repetitive code.
+
+As I understand, it is not possible to automatically convert these errors because the context object is needed to create a JavaScript error, although this would be ideal if possible.
 
 > What other designs have been considered and what is the rationale for not choosing them?
 
