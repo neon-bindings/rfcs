@@ -7,7 +7,7 @@
 
 [summary]: #summary
 
-This RFC proposes a new trait `ResultExt` with an implementation for `std::result::Result`. The trait includes a method named `or_throw` which works similarly to that of `JsResultExt`, except that it does not require the success value to implement `neon::types::Value`.
+This RFC proposes a new trait `ResultExt` with an implementation for `std::result::Result`. The trait includes a method named `or_throw` which works similarly to that of `JsResultExt`, throwing a JavaScript error if the result is an error, except that it does not require the success value to implement `neon::types::Value`.
 
 # Motivation
 
@@ -15,7 +15,7 @@ This RFC proposes a new trait `ResultExt` with an implementation for `std::resul
 
 This feature would allow developers using Neon to call functions from `std` or third party libraries which return `Result`, and properly handle errors which may occur by converting these to `NeonResult` without needing to write their own boilerplate code, or repetitive code in function bodies.
 
-Currently, developers using Neon with non-Neon `Result`-returning functions either have to implement a similar trait themselves, or write something like the following on a line-by-line basis, which is rather verbose:
+Currently, Neon users calling third party functions returning a `Result` either have to implement a similar trait themselves, or write something like the following on a line-by-line basis, which is rather verbose:
 
 ```rust
 do_something().or_else(|e| cx.throw_error(e.to_string()))?
@@ -63,7 +63,7 @@ fn create_file(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-Using `or_throw`, we can achieve the same as the previous example using a shorter syntax:
+Using `or_throw`, we can achieve the same as the previous example using a less verbose, repetitive syntax:
 
 ```rust
 use neon::prelude::*;
@@ -77,13 +77,13 @@ fn create_file(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-In this example, `or_throw` automatically creates a JavaScript error if either of the file methods fail, including the original error text.
+In this example, `or_throw` automatically throws a JavaScript error if either of the file methods return an error, including the original error text.
 
 # Reference-level explanation
 
 [reference-level-explanation]: #reference-level-explanation
 
-This could be added to `result/mod.rs` in the following manner:
+This feature could be implemented in `result/mod.rs` in the following manner:
 
 ```rust
 /// An extension trait for `Result` values that can be converted into `NeonResult` values by throwing a JavaScript
@@ -102,9 +102,9 @@ impl<V, E: Display> ResultExt<V> for Result<V, E> {
 }
 ```
 
-It would also be advisable to include this in `prelude.rs` so that users don't have to `use` it explicitly.
+It should also be re-exported in `prelude.rs` so that users don't need to `use` it explicitly.
 
-In this proposed code, the trait is implemented for `Result` types where the error variant implements `Display`, which means it should automatically work for `std` and third-party library functions which return a `Result`. Advanced users could implement the trait for custom result types whose errors may not implement `Display`.
+In this proposed code, the trait is implemented for `Result` types where the error variant implements `Display`, which means it should automatically work for most `std` and third-party library functions which return a `Result`. Advanced users could implement the trait for custom result types whose errors may not implement `Display`.
 
 > This section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
 
@@ -114,8 +114,8 @@ In the second example under [Guide-level explanation](#guide-level-explanation),
 
 [drawbacks]: #drawbacks
 
-- Developers using Neon could trivially implement this themselves
-- Only benefit over using `or_else` is length + less verbosity
+- Neon users could trivially implement this themselves in their code
+- Minimal benefit over using `or_else` (shorter length + less verbosity)
 - Isn't useful if a developer wants to write a custom error message
 - Only supports JS `Error` (see [Unresolved questions](#unresolved-questions))
 
@@ -125,23 +125,23 @@ In the second example under [Guide-level explanation](#guide-level-explanation),
 
 > Why is this design the best in the space of possible designs?
 
-I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors as it requires the least amount of repetitive code.
-
-As I understand, it is not possible to automatically convert these errors because the context object is needed to create a JavaScript error, although this would be ideal if possible.
+I believe this is the most elegant way to 'translate' Rust errors to JavaScript errors as it requires the least amount of boilerplate or repetitive code from Neon users.
 
 > What other designs have been considered and what is the rationale for not choosing them?
 
-As of yet I have not considered any alternatives as various other ways of converting errors are already possible - suggestions welcome!
+As I understand, it would not be possible to automatically convert `Result` types using a `From` implementation, because the context object is needed to throw a JavaScript error. If this were possible then it would be the most elegant solution by not requiring any additional method calls.
+
+I am not aware of any other alternative solutions to this problem which are not already possible, e.g. using `or_else` as shown in [Guide-level explanation](#guide-level-explanation). Suggestions welcome!
 
 > What is the impact of not doing this?
 
-Developers can continue to use `or_else` or other techniques to handle `Result` values that aren't compatible with `NeonResult`, however these do not seem as elegant.
+Users can call `or_else` to handle `Result` values and convert errors to JavaScript exceptions, or implement the proposed trait and implementation themselves. In doing this, there is more boilerplate and repetitive code in Neon projects which need to handle `Result` values from third party functions.
 
 # Unresolved questions
 
 [unresolved]: #unresolved-questions
 
-- Are there any 'more elegant' ways to convert errors that I haven't considered?
-- Should this trait also be implemented for other `Result` types, e.g. where `E` doesn't implement `Display`?
+- Are there any simpler alternative ways to convert errors that I haven't considered?
+- Should this trait also be implemented for all `Result` types where `E` doesn't implement `Display`?
 - Should similar methods be written to throw other types of JavaScript errors, e.g. `TypeError`?
   - Should there be an extra parameter to specify the JS error type?
