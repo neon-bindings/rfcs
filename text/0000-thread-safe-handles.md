@@ -85,7 +85,7 @@ fn log(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-### `neon::task::EventQueue`
+### `neon::event::EventQueue`
 
 Once a value is wrapped in a `Root<_>`, it must be sent back to the JavaScript that created it to unwrap. `EventQueue` provides a mechanism for requesting work be performed on a JavaScript thread.
 
