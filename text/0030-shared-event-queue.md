@@ -6,8 +6,9 @@
 # Summary
 [summary]: #summary
 
-Make `EventQueue` use a shared `ThreadsafeFunction` to leverage the
-[performance optimization][0] in recent Node.js versions.
+Make `cx.queue()` use a shared `ThreadsafeFunction` to leverage the
+[performance optimization][0] in recent Node.js versions, but let
+`EventQueue::new()` create new `ThreadsafeFunction`.
 
 # Motivation
 [motivation]: #motivation
@@ -17,7 +18,9 @@ another thread by using a `ThreadsafeFunction`. Recent Node.js versions have a
 [performance optimization][0] for the case where a single `ThreadsafeFunction`
 is invoked multiple times in a row. Thus using a single shared
 `ThreadsafeFunction` in `EventQueue`s would lead to significant performance
-improvements for Neon users.
+improvements for Neon users. There are some [drawbacks][drawbacks] to this
+approach so `EventQueue::new()` has to continue using a new
+`ThreadsafeFunction` for every created `EventQueue` instance.
 
 These improvements are perhaps most noticeable when Neon addon is used from the
 Electron, because scheduling new UV ticks in Electron are very costly.
@@ -41,7 +44,7 @@ std::thread::spawn(move || {
 ```
 
 Calling `queue.send()` several times in a row using different `cx.queue()` would
-be significantly faster:
+be up to 12x times faster:
 ```rust
 loop {
     cx.queue().send(|| {
@@ -56,16 +59,18 @@ loop {
 With the recent [node.js changes][0] `ThreadsafeFunction` will loop over pending
 calls, invoking up to 1000 of them in the same tick instead of running each new
 call on a separate UV loop tick. This is an implementation detail that is
-intentionally not covered by `napi_create_threadsafe_function` documentation to
+not covered by `napi_create_threadsafe_function` documentation to
 allow for potential performance optimizations in the future.
 
-Neon doesn't currently leverage it without the proposed changes because a new
-`ThreadsafeFunction` is created for each new `EventQueue`, and `cx.queue()`
-creates a new `EventQueue` every time as requested. So instead of doing that it
-is proposed that we use existing `lifetime::InstanceData` internal API layer to
-hold a wrapper around `ThreadsafeFunction` tailored to execute Rust closures
-specifically, and to use an `Arc` reference to a `RwLock` over this wrapper in
-the `EventQueue` for a shared access.
+The API offered by Neon encourages users to create new `EventQueue`s through
+`cx.queue()` call thus preventing this optimization from having an effect.
+So instead of doing that it we propose to use existing `lifetime::InstanceData`
+internal API layer to hold a wrapper around `ThreadsafeFunction` tailored to
+execute Rust closures specifically, and to use an `Arc` reference to a `RwLock`
+over this wrapper in the `EventQueue` for a shared access.
+
+Use of `RwLock` is required because `.reference()`/`.unref()` methods of
+`ThreadsafeFunction` need `mut self`.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -97,10 +102,8 @@ std::thread::spawn(move || {
 ```
 
 The example above wouldn't print "every second" once per second. The prints
-will be delayed by the closures scheduled on `another_queue`.
-
-While the example above reproduces the issue - it is quite pathological and
-should be avoided even without the proposed changes.
+will be delayed by the closures scheduled on `another_queue`. Using
+`EventQueue::new()` would let users address this issue.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
@@ -108,10 +111,6 @@ should be avoided even without the proposed changes.
 As an alternative, we could expose `lifecycle::InstanceData` to let API users
 store instances of `EventQueue` in it themselves, shifting the burden of
 performance optimization from Neon's hands to users.
-
-Another alternative would be to make `EventQueue::new()` use new
-`ThreadsafeFunction` unlike `cx.queue()` that would still return the
-`EventQueue` instance that encapsulates a shared `ThreadsafeFunction`.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
