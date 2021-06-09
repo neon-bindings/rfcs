@@ -47,13 +47,18 @@ p.greet(); // Hello, my name is Peter
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+The current declare_types macro has a two-part initialization with the second part being optional.
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- Corner cases are dissected by example.
+- (Required). Constructor. This creates the Rust struct that gets wrapped into the JS class.
+- (Optional). Initialization. This has access to the created class and can perform actions like assigning properties. This can be thought of as using this in a JS constructor.
 
-This section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+Possible ways to implement it:
+
+- Another macro attribute like #[neon::class_init] for that phase
+- Need to call a function and return a class instead of the data type.
+```rust
+create_class(Person { name, age })
+```
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -70,6 +75,8 @@ Why should we _not_ do this?
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+From kjvalencik
+- What is the name of the type? Do we generate complete new types or do we have something like `JsClass<Person>`?
+- Do we implicitly create a `RefCell` or do we only allow `&self`? I think we should start simple and class methods can only take `&self`. If they take a different form of `&self` we fail to compile and if they don't take `self` at all we create a static method.
+- Are there any other critical features? In my opinion we should start simple and not try to add everything.
+- What happens if the class is called as a function instead of a constructor?
