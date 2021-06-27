@@ -18,13 +18,14 @@ Currently, the `Symbol` function and primitive object wrapper API is available [
 
 Constructing a `JsSymbol`:
 ```rust
-// symbol with a description
-let symbol = JsSymbol::with_description(&mut cx, "foo");
+// symbol with a JsString Handle description
+let description = cx.string("foo");
+let symbol = JsSymbol::with_description(&mut cx, description);
 
 // symbol without a description
 let symbol = JsSymbol::new(&mut cx);
 
-// convenience construction method on Context for the common case of `with_description`
+// convenience construction method on Context for the common case with a string.
 let symbol = cx.symbol("foo");
 ```
 
@@ -39,9 +40,10 @@ fn is_symbol(mut cx: FunctionContext) -> JsResult<JsBoolean> {
 
 Unlike many other primitives, `JsSymbol` doesn't have a `value` method to convert to a Rust type. However, it has a `description` method that returns the underlying `Symbol.prototype.description` instance property:
 ```rust
-let symbol = JsSymbol::with_description(&mut cx, "foo");
-let description = symbol.description(&mut cx);
-assert_eq!(description, Some("foo".to_owned()));
+let description_handle = cx.string("foo");
+let symbol = JsSymbol::with_description(&mut cx, description_handle);
+let description_string = symbol.description(&mut cx).unwrap().value(&mut cx);
+assert_eq!(description_string, "foo".to_owned());
 
 let symbol_without_description = JsSymbol::new(&mut cx);
 let description = symbol_without_description.description(&mut cx);
@@ -62,8 +64,8 @@ pub struct JsSymbol(raw::Local);
 
 impl JsSymbol {
     pub fn new<'a, C: Context<'a>>(cx: &mut C) -> Handle<'a, JsSymbol>;
-    pub fn with_description<'a, C: Context<'a>, S: AsRef<str>>(cx: &mut C, s: S) -> Handle<'a, JsSymbol>;
-    pub fn description<'a, C: Context<'a>>(self, cx: &mut C) -> Option<String>;
+    pub fn with_description<'a, C: Context<'a>>(cx: &mut C, d: Handle<'a, JsString>) -> Handle<'a, JsSymbol>;
+    pub fn description<'a, C: Context<'a>>(self, cx: &mut C) -> Option<Handle<'a, JsString>>;
 }
 
 impl Value for JsSymbol {}
@@ -87,12 +89,11 @@ impl ValueInternal for JsSymbol {
 ```rust
 trait Context<'a>: ContextInternal<'a> {
     fn symbol<S: AsRef<str>>(&mut self, s: S) -> Handle<'a, JsSymbol> {
-        JsSymbol::with_description(self, s)
+        let desc = self.string(s);
+        JsSymbol::with_description(self, desc)
     }
 }
 ```
-
-NOTE: Node 10.23 [does not support](https://node.green/#ES2019-misc-Symbol-prototype-description) `Symbol.prototype.description`, so I believe this would need to be feature-flagged.
 
 # Unresolved questions
 [unresolved]: #unresolved-questions
