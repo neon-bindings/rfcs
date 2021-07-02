@@ -1,7 +1,7 @@
 - Feature Name: try_catch
 - Start Date: 2020-05-21
-- RFC PR: (leave this empty)
-- Neon Issue: (leave this empty)
+- RFC PR: https://github.com/neon-bindings/neon/milestone/5
+- Neon Issue: https://github.com/neon-bindings/neon/pull/543
 
 # Summary
 [summary]: #summary
