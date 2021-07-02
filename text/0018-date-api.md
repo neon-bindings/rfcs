@@ -1,7 +1,7 @@
 - Feature Name: date_api
 - Start Date: 2018-03-21
-- RFC PR: 
-- Neon Issue: 
+- RFC PR: https://github.com/neon-bindings/neon/pull/690
+- Neon Issue: https://github.com/neon-bindings/neon/pull/639
 
 # Summary
 [summary]: #summary
