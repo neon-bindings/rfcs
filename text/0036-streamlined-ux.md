@@ -1,7 +1,7 @@
 - Feature Name: streamlined_ux
 - Start Date: 2020-09-17
-- RFC PR: (leave this empty)
-- Neon Issue: (leave this empty)
+- RFC PR: https://github.com/neon-bindings/neon/pull/543
+- Neon Issue: https://github.com/neon-bindings/rfcs/pull/36
 
 # Summary
 [summary]: #summary
