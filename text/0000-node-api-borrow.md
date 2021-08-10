@@ -37,25 +37,80 @@ There are a few methods on the `Context` trait that do not take `&mut self` and 
 
 The borrowing design consists of a statically checked, ergonomic API and a more complex, but powerful runtime checked API.
 
-#### Simple API
-
-Users are able to borrow the contents of a JavaScript buffer easily and infallibly:
+#### `trait Borrow`
 
 ```rust
-impl JsArrayBuffer {
-    pub fn as_slice<'a: 'b, 'b, C>(&'b self, cx: &'b C) -> &'b [u8]
-        where
-            C: Context<'a>,
-    {
-        todo!()
-    }
+pub trait Borrow: private::Sealed {
+    type Item;
 
-    pub fn as_mut_slice<'a: 'b, 'b, C>(&'b mut self, cx: &'b mut C) -> &'b mut [u8]
+    /// Statically checked immutable borrow of binary data.
+    ///
+    /// This may not be used if a mutable borrow is in scope. For the dynamically
+    /// checked variant see [`Borrow::try_borrow`].
+    fn as_slice<'a: 'b, 'b, C>(&'b self, cx: &'b C) -> &'b [Self::Item]
         where
-            C: Context<'a>,
-    {
-        todo!()
-    }
+            C: Context<'a>;
+
+    /// Statically checked mutable borrow of binary data.
+    ///
+    /// This may not be used if any other borrow is in scope. For the dynamically
+    /// checked variant see [`Borrow::try_borrow_mut`].
+    fn as_mut_slice<'a: 'b, 'b, C>(&'b mut self, cx: &'b mut C) -> &'b mut [Self::Item]
+        where
+            C: Context<'a>;
+
+    /// Dynamically checked immutable borrow of binary data, returning an error if the
+    /// the borrow would overlap with a mutable borrow.
+    ///
+    /// The borrow lasts until [`Ref`] exits scope.
+    ///
+    /// This is the dynamically checked version of [`Borrow::as_slice`].
+    fn try_borrow<'a: 'b, 'b, C>(
+        &self,
+        lock: &'b Lock<'b, C>,
+    ) -> Result<Ref<'b, Self::Item>, BorrowError>
+        where
+            C: Context<'a>;
+
+    /// Dynamically checked mutable borrow of binary data, returning an error if the
+    /// the borrow would overlap with an active borrow.
+    ///
+    /// The borrow lasts until [`RefMut`] exits scope.
+    ///
+    /// This is the dynamically checked version of [`Borrow::as_mut_slice`].
+    fn try_borrow_mut<'a: 'b, 'b, C>(
+        &mut self,
+        lock: &'b Lock<'b, C>,
+    ) -> Result<RefMut<'b, Self::Item>, BorrowError>
+        where
+            C: Context<'a>;
+}
+```
+
+All JavaScript values that may be borrowed as binary data will implement the `Borrow` trait. The trait provides four methods which may be split into two groups:
+
+* [Statically Checked](#statically-checked-api)
+* [Dynamically Checked](#dynamically-checked-api)
+
+*Note: The trait is `Sealed` to prevent external implementations which may be unsound.*
+
+#### Statically Checked API
+
+Users are able to borrow the contents of a JavaScript buffer easily and infallibly with `Borrow::as_slice` and `Borrow::as_mut_slice`.
+
+For example, a Neon function that copies bytes from one `Buffer` to another:
+
+```rust
+fn copy_buffer(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let source = cx.argument::<JsBuffer>(0)?;
+    let mut dest = cx.argument::<JsBuffer>(1)?;
+
+    let source = source.as_slice(&mut cx).to_vec();
+    let dest = dest.as_mut_slice(&mut cx);
+
+    dest.copy_from_slice(&source);
+
+    Ok(cx.undefined())
 }
 ```
 
@@ -64,26 +119,58 @@ The lifetime of the returned slice is bound by the lifetime of context borrow. T
 * Neon APIs may not be called that could alter the contents of the slice
 * The slice may not outlive the current execution scope 
 
-Multiple immutable buffers may be borrowed at the same time. However, only a *single* buffer may be borrowed mutably because JavaScript handles may alias each other. This is enforced by holding a *mutable* reference to context.
+Multiple immutable buffers may be borrowed at the same time. However, only a *single* buffer may be borrowed mutably because JavaScript handles may alias each other or their contents may overlap. This is enforced by holding a *mutable* reference to context.
 
-#### Runtime Checked API
+The previous example cloned the data to a temporary `Vec<u8>`. This is necessary to avoid a compile error.
 
-When borrowing a buffer mutably with the simple API, the returned slice is bound by an exclusive (`mut`) borrow of context. This limitation prevents a user from borrowing multiple buffers simultaneously if one is borrowed mutably. For example, a user could not directly copy the contents of a buffer to another buffer.
+```rust
+// error[E0499]: cannot borrow `cx` as mutable more than once at a time
+fn copy_buffer(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let source = cx.argument::<JsBuffer>(0)?;
+    let mut dest = cx.argument::<JsBuffer>(1)?;
+
+    let source = source.as_slice(&mut cx);
+    //                           ------- first mutable borrow occurs here
+    let dest = dest.as_mut_slice(&mut cx);
+    //                           ^^^^^^^ second mutable borrow occurs here     
+
+    dest.copy_from_slice(&source);
+    //                   ------- first borrow later used here
+
+    Ok(cx.undefined())
+}
+```
+
+#### Dynamically Checked API
+
+When borrowing a buffer mutably with the [statically checked API](#statically-checked-api), the returned slice is bound by an exclusive (`mut`) borrow of context. This limitation prevents a user from borrowing multiple buffers simultaneously if one is borrowed mutably. For example, a user could not directly copy the contents of a buffer to another buffer.
 
 The runtime checked API relaxes these constraints at the cost of runtime bookkeeping.
+
+The [`Borrow` trait](#trait-borrow) provides dynamically checked APIs as `Borrow::try_borrow` and `Borrow::try_borrow_mut`. Each of these methods requires a reference to the VM [`Lock`](#lock).
 
 ##### Lock
 
 Users may "lock" the VM by creating a `Lock` struct. Neon APIs which may execute JavaScript are statically prevented since the `Lock` struct holds a mutable reference to `Context`.
 
 ```rust
-trait Context {
-    fn lock(&mut self) -> Lock<Self>;
+trait Context<'a> {
+    fn lock<'b>(&'b mut self) -> Lock<Self>
+        where
+            'a: 'b;
 }
 
 pub struct Lock<'cx, C> {
     cx: &'cx mut C,
-    /* ... */
+    ledger: RefCell<Ledger>,
+}
+
+struct Ledger {
+    // Mutable borrows. Should never overlap with other borrows.
+    owned: Vec<Range<*const u8>>,
+
+    // Immutable borrows. May overlap or contain duplicates.
+    shared: Vec<Range<*const u8>>,
 }
 ```
 
@@ -91,81 +178,90 @@ Additionally, the `Lock` maintains a ledger of currently active borrows.
 
 ##### Borrowing
 
-Buffers which may be borrowed dynamically using `Lock` implement the `Borrow` trait.
-
-```rust
-pub trait Borrow<'env, C, T>
-where
-    C: Context<'env>,
-{
-    fn try_borrow<'b>(
-        &self,
-        lock: &'b Lock<'b, C>,
-    ) -> Result<Ref<'b, C, T>, BorrowError>;
-
-    fn try_borrow_mut<'b, 'cx>(
-        &mut self,
-        lock: &'b Lock<'b, C>,
-    ) -> Result<RefMut<'b, C, T>, BorrowMutError>;
-}
-```
-
 Attempting to borrow a buffer may *fail* and follows the same rules as [`std::cell::RefCell<T>`](https://doc.rust-lang.org/std/cell/struct.RefCell.html).
 
-On success, a smart pointer is returned which can be dereferenced into a slice. When dropping a smart pointer, the borrow is removed from the ledger.
+On success, a smart pointer is returned which can be dereferenced into a slice.
 
 ```rust
-pub struct Ref<'a, C, T> {
-    ledger: &'a Ledger<'a, C>,
+pub struct Ref<'a, T> {
     data: &'a [T],
+    ledger: &'a RefCell<Ledger>,
 }
 
-pub struct RefMut<'a, C, T> {
-    ledger: &'a Ledger<'a, C>,
+pub struct RefMut<'a, T> {
     data: &'a mut [T],
+    ledger: &'a RefCell<Ledger>,
 }
 
 pub struct BorrowError {
     _private: (),
 }
 
-pub struct BorrowMutError {
-    _private: (),
-}
-
 impl Error for BorrowError {}
-impl Error for BorrowMutError {}
 ```
 
-The implementation of `Borrow` on `JsArrayBuffer` would use `T: u8`:
+The `Ref` and `RefMut` borrow guards serve two purposes:
+
+* Associate the lifetime of the borrow with the lifetime of the `Lock`. This ensures that references be held after the VM is unlocked.
+* Proide an `impl Drop` that removes the borrow from the ledger
+
+The implementation of `Borrow` on `JsArrayBuffer` would use `type Item: u8`:
 
 ```rust
-impl<C> Borrow<C, u8> for JsArrayBuffer
-where
-    for<'env> C: Context<'env>,
-{
+impl Borrow for JsArrayBuffer {
+    type Item = u8;
+
     /* ... */
 }
 ```
 
-### `Lock` extension for `Borrow`
-
-While the `Borrow` trait provides the required functionality, it requires that the trait be in scope. In order to make this more ergonomic for users, the methods are mirrored on `Lock`. These methods do *not* require the trait in scope.
+The `BorrowError` type may also be converted to an exception using the *new* `neon::result::ResultExt` trait:
 
 ```rust
-impl<'cx, 'env, C: Context<'env>> Ledger<'cx, C> {
-    fn try_borrow<'b, T>(
-        &'b self,
-        item: &impl Borrow<'env, C, T>,
-    ) -> Result<Ref<'b, C, T>, BorrowError> {
-        todo!()
+/// Extension trait for converting Rust [`Result`](std::result::Result) values
+/// into [`NeonResult`](NeonResult) values by throwing JavaScript exceptions.
+pub trait ResultExt<T> {
+    fn or_throw<'a, C: Context<'a>>(self, cx: &mut C) -> NeonResult<T>;
+}
+```
+
+The `ResultExt` trait is identical to `JsResultExt` except that it does not require the `Ok` branch to implement `Value`. We will most likely want to deprecate `JsResultExt` in the future since this trait is strictly more powerful.
+
+### `Lock` extension for `Borrow`
+
+While the `Borrow` trait provides the required functionality, it requires that the trait be in scope. In order to make this more ergonomic for users, the dynamically checked methods are mirrored on `Lock`. These methods do *not* require the trait in scope.
+
+```rust
+impl<'a: 'cx, 'cx, C> Lock<'cx, C>
+    where
+        C: Context<'a>,
+{
+    /// Constructs a new [`Lock`] and locks the VM. See also [`Context::lock`].
+    pub fn new(cx: &'cx mut C) -> Lock<'cx, C> {
+        Lock {
+            cx,
+            ledger: Default::default(),
+        }
     }
 
-    fn try_borrow_mut<'b, T>(
-        &self,
-        item: &mut impl Borrow<'env, C, T>,
-    ) -> Result<RefMut<'b, C, T>, BorrowMutError> {
-        todo!()
+    /// Dynamically checked immutable borrow.
+    ///
+    /// See [`Borrow::try_borrow`].
+    pub fn try_borrow<T>(&self, buf: &T) -> Result<Ref<T::Item>, BorrowError>
+        where
+            T: Borrow,
+    {
+        buf.try_borrow(self)
+    }
+
+    /// Dynamically checked mutable borrow.
+    ///
+    /// See [`Borrow::try_borrow_mut`].
+    pub fn try_borrow_mut<T>(&self, buf: &mut T) -> Result<RefMut<T::Item>, BorrowError>
+        where
+            T: Borrow,
+    {
+        buf.try_borrow_mut(self)
     }
 }
 ```
@@ -176,7 +272,7 @@ impl<'cx, 'env, C: Context<'env>> Ledger<'cx, C> {
 
 While `ArrayBuffer` is always a chunk of `u8`, views may have different numeric parameters (`Int8Array`, `Uint8Array`, `Uint8ClampedArray`, `Int16Array`, `Uint16Array`, `Int32Array`, `Uint32Array`, `Float32Array`, `Float64Array`, `BigInt64Array`, `BigUint64Array`)
 
-The specific type of a typed array is indicated by a type parameter on `JsTypeArray`.
+The specific type of typed array is indicated by a type parameter on `JsTypeArray`.
 
 ```rust
 pub struct JsTypedArray<T> {
@@ -196,17 +292,16 @@ impl JsTypedArray<i64> {}
 impl JsTypedArray<u64> {}
 ```
 
-Both `Uint8Array` and `Uint8ClampedArray` are represented with a type parameter of `u8`. "Clamped" is not represented because we cannot ergonomically enforce the writing constraint.
+Both `Uint8Array` and `Uint8ClampedArray` are represented with a type parameter of `u8`. "Clamped" is not represented in this design because it could not be ergonomically enforced.
 
 ##### Borrow
 
 It is possible to implement `Borrow` generically for all` JsTypedArray`.
 
 ```rust
-impl<'env, C, T> Borrow<'env, C, T> for JsTypedArray<T>
-where
-    C: Context<'env>,
-{
+impl<T: Copy> Borrow for JsTypedArray<T> {
+    type Item = T;
+
     /* ... */
 }
 ```
@@ -215,7 +310,19 @@ However, since `JsTypedArray` may overlap with each other, it is important that 
 
 ### Module Layout
 
-TODO
+```
+neon
+└── types
+    ├── JsArrayBuffer
+    ├── JsBuffer
+    ├── JsTypedArray<T>
+    └── binary
+        ├── Borrow
+        ├── BorrowError
+        ├── Lock
+        ├── Ref
+        └── RefMut
+```
 
 # Examples
 
@@ -292,15 +399,24 @@ Neon already has a [Borrow API](https://docs.rs/neon/0.8.3/neon/borrow/index.htm
 * Only applies to binary data and not `JsBox`
 * Always runtime checked
 
-### Associated type parameter
+### Generic type parameter in `Borrow` trait
 
-This would afford additional flexibility like representing "clamped" in the type signature and borrowing as different numeric types. However, it would increase the cognitive load for users significantly. It's unlikely that most users will need to know if an array is clamped and this can be added in later as a runtime check. Additionally, converting types is better handled with other numeric crates.
+This would allow us to implement `Borrow` multiple times for a single type. For example, borrowing `JsBuffer` as `u8` or `u16`. However, it comes at two significant ergonomic issues:
+
+* Complicates the definition of the trait when used as a bound
+* User *must* hint at the type they want to borrow, even when there's only a single implementation
+
+Given these limitations, Neon will recommend using the `bytes` crate or similar to convert between representations.
 
 ### Only borrowing `u8`
 
 This is the most attractive option because it simplifies the type system significantly and allows users to pass in arbitrary buffer types and handle it consistently. 
 
 However, it fails to fully represent the richness of the view types in JavaScript and the safety of Rust slices.
+
+### `BorrowMutError` unique type
+
+This significantly complicates error handling where a user may have different error types (e.g., copying from immutable borrows to a mutable borrow) while not providing much value.
 
 # Future Expansion
 
@@ -333,9 +449,11 @@ impl JsTypedArray<u8> {
 }
 ```
 
+We could also create a `JsTypedArray<Clamped>` since the trait uses an associated type.
+
 # Unresolved questions
 
-* Should we also have `borrow` and `borrow_mut` that panic?
-* Should we add `borrow` and `borrow_mut` aliases to the types themselves?
-* Should we add a new `ResultExt` trait so you can `or_throw` the errors?
-* Should creating typed views be part of this change?
+* ~Should we also have `borrow` and `borrow_mut` that panic?~ I don't think we should since this is much more difficult to reason about than on a `RefCell` where the borrows are mostly local.
+* Should we add `as_slice` and `as_slice_mut` aliases to the types themselves? This would mean the trait never needs to be in scope. 
+* Should the `Borrow` trait have a different name? It will conflict with `std::borrow::Borrow`, so we may want to pick a name less likely to conflict.
+* What about the module structure? Should parts be moved out of `types`?
