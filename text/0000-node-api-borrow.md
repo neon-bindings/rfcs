@@ -68,7 +68,7 @@ pub trait TypedArray: private::Sealed {
     fn try_borrow<'a: 'b, 'b, C>(
         &self,
         lock: &'b Lock<'b, C>,
-    ) -> Result<Ref<'b, Self::Item>, TypedArrayError>
+    ) -> Result<Ref<'b, Self::Item>, BorrowError>
         where
             C: Context<'a>;
 
@@ -81,7 +81,7 @@ pub trait TypedArray: private::Sealed {
     fn try_borrow_mut<'a: 'b, 'b, C>(
         &mut self,
         lock: &'b Lock<'b, C>,
-    ) -> Result<RefMut<'b, Self::Item>, TypedArrayError>
+    ) -> Result<RefMut<'b, Self::Item>, BorrowError>
         where
             C: Context<'a>;
 }
@@ -208,11 +208,11 @@ pub struct RefMut<'a, T> {
     ledger: &'a RefCell<Ledger>,
 }
 
-pub struct TypedArrayError {
+pub struct BorrowError {
     _private: (),
 }
 
-impl Error for TypedArrayError {}
+impl Error for BorrowError {}
 ```
 
 The `Ref` and `RefMut` borrow guards serve two purposes:
@@ -230,7 +230,7 @@ impl TypedArray for JsArrayBuffer {
 }
 ```
 
-The `TypedArrayError` type may also be converted to an exception using the *new* `neon::result::ResultExt` trait:
+The `BorrowError` type may also be converted to an exception using the *new* `neon::result::ResultExt` trait:
 
 ```rust
 /// Extension trait for converting Rust [`Result`](std::result::Result) values
@@ -296,7 +296,7 @@ neon
     ├── JsTypedArray<T>
     └── buffer
         ├── TypedArray
-        ├── TypedArrayError
+        ├── BorrowError
         ├── Ref
         └── RefMut
 ```
