@@ -6,9 +6,9 @@
 # Summary
 [summary]: #summary
 
-Two new `Send` and `Sync` features are introduced: `EventQueue: Send + Sync` and `Root: Send`. These features work together to allow multi-threaded modules to interact with JavaScript.
+Two new `Send` and `Sync` features are introduced: `Channel: Send + Sync` and `Root: Send`. These features work together to allow multi-threaded modules to interact with JavaScript.
 
-* `EventQueue`: Provides a `send` method for queueing a Rust closure to be executed by the JavaScript thread that created the `EventQueue`.
+* `Channel`: Provides a `send` method for queueing a Rust closure to be executed by the JavaScript thread that created the `Channel`.
 * `Root<_>`: An external reference to JavaScript object that can be sent across threads. It may only be dereferenced by the JavaScript thread that created it.
 
 # Motivation
@@ -85,19 +85,19 @@ fn log(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-### `neon::event::EventQueue`
+### `neon::event::Channel`
 
-Once a value is wrapped in a `Root<_>`, it must be sent back to the JavaScript that created it to unwrap. `EventQueue` provides a mechanism for requesting work be performed on a JavaScript thread.
+Once a value is wrapped in a `Root<_>`, it must be sent back to the JavaScript that created it to unwrap. `Channel` provides a mechanism for requesting work be performed on a JavaScript thread.
 
-To schedule work, send a Rust closure to the event queue:
+To schedule work, send a Rust closure across a `Channel` to the event queue:
 
 ```rust
 fn thread_callback(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let cb = cx.argument::<JsFunction>(0)?.root(&mut cx);
-    let queue = cx.event_queue(&mut cx);
+    let channel = cx.channel(&mut cx);
 
     std::thread::spawn(move || {
-        queue.send(move |mut cx| {
+        channel.send(move |mut cx| {
             let this = cx.undefined();
             let msg = cx.string("Hello, World!");
             let cb = cb.into_inner(&cx);
@@ -112,19 +112,19 @@ fn thread_callback(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-`Root<_>` can be cloned from the JavaScript thread that created them. `EventQueue` cannot be cloned, but are `Sync` and can be wrapped in an `Arc` without addition synchronization.
+`Root<_>` can be cloned from the JavaScript thread that created them. `Channel` cannot be cloned, but are `Sync` and can be wrapped in an `Arc` without addition synchronization.
 
 ```rust
 fn thread_callback(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let cb = cx.argument::<JsFunction>(0)?.root(&mut cx);
-    let queue = Arc::new(cx.event_queue(&mut cx));
+    let channel = Arc::new(cx.channel(&mut cx));
 
     for i in (1..=10) {
-        let queue = queue.clone();
+        let channel = channel.clone();
         let cb = cb.clone(&mut cx);
 
         std::thread::spawn(move || {
-            queue.send(move |mut cx| {
+            channel.send(move |mut cx| {
                 let this = cx.undefined();
                 let msg = cx.string(format!("Count: {}", i));
                 let cb = cb.into_inner(&cx);
@@ -143,24 +143,24 @@ fn thread_callback(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 }
 ```
 
-Instances of `EventQueue` will keep the event loop running and prevent the process from exiting. The `EventQueue::unref` method is provided to change this behavior and allow the process to exit while an instance of `EventQueue` still exists.
+Instances of `Channel` will keep the event loop running and prevent the process from exiting. The `Channel::unref` method is provided to change this behavior and allow the process to exit while an instance of `Channel` still exists.
 
-However, calls to `EventQueue::send` _might_ not execute before the process exits.
+However, calls to `Channel::send` _might_ not execute before the process exits.
 
 This is identical to the API provided by [timers](https://nodejs.org/api/timers.html) in Node.
 
 ```rust
 fn thread_callback(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let cb = cx.argument::<JsFunction>(0)?.root(&mut cx);
-    let mut queue = cx.event_queue(&mut cx);
+    let mut channel = cx.channel(&mut cx);
 
-    queue.unref();
+    channel.unref();
 
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(1));
 
         // If the event queue is empty, the process may exit before this executes
-        queue.send(move |mut cx| {
+        channel.send(move |mut cx| {
             let this = cx.undefined();
             let msg = cx.string("Hello, World!");
             let cb = cb.into_inner(&cx);
@@ -292,7 +292,7 @@ impl<T> Finalize for Root<T> {
 
 ```rust
 struct MyCallback {
-    queue: EventQueue,
+    channel: Channel,
     callback: Arc<Root<JsFunction>>,
 }
 
@@ -304,10 +304,10 @@ impl Finalize for MyStruct {
 
 impl MyCallback {
     fn call<'a, C: Context<'a>>(&self) -> JsResult<JsUndefined> {
-        let queue = self.queue.clone();
+        let channel = self.channel.clone();
         let callback = Arc::clone(self.callback);
 
-        std::thread::spawn(move || queue.send(move |cx| {
+        std::thread::spawn(move || channel.send(move |cx| {
             let callback = Arc::try_unwrap(callback)
                 .or_else(|cb| cb.clone(&mut cx))
                 .into_inner(&mut cx);
@@ -340,34 +340,34 @@ impl Drop for Root {
 
 In the future, neon may include a higher level construct that abstracts away this error prone usage.
 
-### `neon::unbounded::EventQueue`
+### `neon::unbounded::Channel`
 
 ```rust
-impl EventQueue {
-    /// Creates an unbounded queue
+impl Channel {
+    /// Creates an unbounded channel
     pub fn new<'a, C: Context<'a>>(cx: &mut C) -> Self;
 
-    /// Allow the Node event loop to exit while this `EventQueue` exists.
+    /// Allow the Node event loop to exit while this `Channel` exists.
     /// _Idempotent_
     pub fn unref<'a, C: Context<'a>>(&mut self, cx: &mut C);
 
-    /// Prevent the Node event loop from existing while this `EventQueue` exists. (Default)
+    /// Prevent the Node event loop from existing while this `Channel` exists. (Default)
     /// _Idempotent_
     pub fn reference<'a, C: Context<'a>>(&mut self, cx: &mut C);
 
-    /// Returns a boolean indicating if this `EventQueue` will prevent the Node event
+    /// Returns a boolean indicating if this `Channel` will prevent the Node event
     /// queue from exiting.
     pub fn has_ref(&self) -> bool;
 
-    /// Schedules a closure to execute on the JavaScript thread that created this EventQueue
+    /// Schedules a closure to execute on the JavaScript thread that created this `Channel`
     /// Will panic if there is an error scheduling a callback from libuv
     pub fn send(
         &self,
         f: impl FnOnce(TaskContext) -> NeonResult<()>,
     );
 
-    /// Schedules a closure to execute on the JavaScript thread that created this EventQueue
-    pub fn try_send<F>(&self, f: F) -> Result<(), EventQueueError>
+    /// Schedules a closure to execute on the JavaScript thread that created this Channel
+    pub fn try_send<F>(&self, f: F) -> Result<(), SendError>
         where F: FnOnce(TaskContext) -> NeonResult<()>;
 }
 ```
@@ -386,29 +386,29 @@ For an unbounded queue, the only error that applies is `napi_generic_failure`
 * `napi_invalid_arg` is only returned when the thread count is zero. The thread count is decremented in a `Drop` hook and protects against calls after it reaches zero.
 
 ```rust
-struct EventQueueError;
+struct SendError;
 
-impl Error for EventQueueError {}
+impl Error for SendError {}
 ```
 
 #### `Send + Sync`
 
-`EventQueue` are both `Send` and `Sync` since N-API threadsafe functions include reference counting and synchronization.
+`Channel` are both `Send` and `Sync` since N-API threadsafe functions include reference counting and synchronization.
 
 #### `trait Context`
 
-The idiomatic way to create an `EventQueue` is from a `Context.
+The idiomatic way to create an `Channel` is from a `Context.
 
 ```rust
 trait Context<'a> {
-    fn queue(&mut self) -> EventQueue {
-        EventQueue::new(self)
+    fn channel(&mut self) -> Channel {
+        Channel::new(self)
     }
 }
 ```
 
 ```rust
-let queue = cx.event_queue();
+let channel = cx.channel();
 ```
 
 #### Design Notes
@@ -423,7 +423,7 @@ Neon must never use `napi_tsfn_abort`. Calling `napi_tsfn_abort` causes unsafety
 
 A call to `napi_release_threadsafe_function` with `napi_tsfn_abort` immediately decrements the threadcount to zero and begins the process of destroying the threadsafe function. Future calls may cause a use after free.
 
-However, it is unlikely that `napi_tsfn_abort` would of use in Neon. Since `EventQueue` cannot be cloned, the thread count will never be higher than `1`.
+However, it is unlikely that `napi_tsfn_abort` would of use in Neon. Since `Channel` cannot be cloned, the thread count will never be higher than `1`.
 
 #### Future Expansion
 
@@ -432,51 +432,51 @@ N-API `napi_threadsafe_function` include an internal queue that can be unbounded
 ```rust
 // mod neon::handle::bounded;
 
-impl EventQueue {
+impl Channel {
     /// Creates a bounded queue
     pub fn new<'a, C: Context<'a>>(cx: &mut C, size: usize) -> Self;
 
-    /// Allow the Node event loop to exit while this `EventQueue` exists.
+    /// Allow the Node event loop to exit while this `Channel` exists.
     /// _Idempotent_
     pub fn unref<'a, C: Context<'a>>(&mut self, cx: &mut C);
 
-    /// Prevent the Node event loop from existing while this `EventQueue` exists. (Default)
+    /// Prevent the Node event loop from existing while this `Channel` exists. (Default)
     /// _Idempotent_
     pub fn reference<'a, C: Context<'a>>(&mut self, cx: &mut C);
 
-    /// Returns a boolean indicating if this `EventQueue` will prevent the Node event
+    /// Returns a boolean indicating if this `Channel` will prevent the Node event
     /// queue from exiting.
     pub fn has_ref(&self) -> bool;
 
-    /// Schedules a closure to execute on the JavaScript thread that created this EventQueue
+    /// Schedules a closure to execute on the JavaScript thread that created this Channel
     /// Blocks if the event queue is full
     pub fn send(
         &self,
         f: impl FnOnce(TaskContext) -> NeonResult<()>,
-    ) -> Result<(), EventQueueError>;
+    ) -> Result<(), SendError>;
 
-    /// Schedules a closure to execute on the JavaScript thread that created this EventQueue
+    /// Schedules a closure to execute on the JavaScript thread that created this `Channel`
     /// Non-blocking
-    pub fn try_send<F>(&self, f: F) -> Result<(), EventQueueError<F>>
+    pub fn try_send<F>(&self, f: F) -> Result<(), SendError<F>>
         where F: FnOnce(TaskContext) -> NeonResult<()>;
 }
 
-enum EventQueueError<F> {
-    /// The bounded queue was full. The closure is returned in the error.
-    QueueFull(F),
+enum SendError<F> {
+    /// The bounded channel was full. The closure is returned in the error.
+    ChannelFull(F),
     /// A generic failure. Most likely on `uv_async_send(&async)`.
     Unknown,
 }
 
-impl Error for EventQueueError {}
+impl Error for SendError {}
 
 // mod neon::handle::unbounded
 
 use super::unbounded;
 
-impl EventQueue {
-    /// Creates a bounded queue
-    pub fn with_capacity<'a, C: Context<'a>>(cx: &mut C, size: usize) -> unbounded::EventQueue;
+impl Channel {
+    /// Creates a bounded channel
+    pub fn with_capacity<'a, C: Context<'a>>(cx: &mut C, size: usize) -> unbounded::Channel;
 }
 ```
 
@@ -496,32 +496,32 @@ It's also important to note that `Task` and `TaskBuilder` give access to the Nod
 
 These are fairly thin wrappers around N-API primitives. The most compelling alternatives are continuing to improve the existing high level APIs.
 
-## `EventQueue: Clone`
+## `Channel: Clone`
 
 Since N-API threadsafe functions include a reference count, it's possible to safely implement `Clone`. However, this has a couple of disadvantages.
 
-Primarily, it makes expressing `unref` and `reference` awkward. These methods mutate the state of the threadsafe function using the JavaScript `Env` to enforce synchronoization. Since there is no obvious wrapper providing interior mutability, it may be unclear that mutating an `EventQueue` will also impact its clones.
+Primarily, it makes expressing `unref` and `reference` awkward. These methods mutate the state of the threadsafe function using the JavaScript `Env` to enforce synchronization. Since there is no obvious wrapper providing interior mutability, it may be unclear that mutating an `Channel` will also impact its clones.
 
 ```rust
-let queue = cx.event_queue();
-let mut queue_copy = queue.clone();
+let channel = cx.channel();
+let mut channel_copy = channel.clone();
 
-// `queue` is neither mutable or in any obvious way related to `queue_copy` but, it is also `unref`
-queue_copy.unref();
+// `queue` is neither mutable or in any obvious way related to `channel_copy` but, it is also `unref`
+channel_copy.unref();
 ```
 
-Alternatively, `unref` can produce a new `EventQueue`. However, this makes it impossible to switch an `EventQueue` back and forth. This could be desirable to allow only keeping the event loop alive while an event is queued. For example:
+Alternatively, `unref` can produce a new `Channel`. However, this makes it impossible to switch an `Channel` back and forth. This could be desirable to allow only keeping the event loop alive while an event is queued. For example:
 
 ```rust
-let mut queue = cx.event_queue();
+let mut channel = cx.channel();
 
-queue.unref();
+channel.unref();
 
 // We're about to queue an event
-queue.reference();
-queue.send(move |cx| {
+channel.reference();
+channel.send(move |cx| {
     // Done. We can let the process exit.
-    queue.unref();
+    channel.unref();
 
     Ok(())
 });
@@ -531,8 +531,8 @@ queue.send(move |cx| {
 [unresolved]: #unresolved-questions
 
 - ~Should this be implemented for the legacy runtime or only n-api?~ Only for `n-api`.
-- ~Should `EventQueue` be `Arc` wrapped internally to encourage users to share instances across threads?~ No. External `Arc` wrapping makes shared mutable state more obvious and allows users to optimize reference counting.
-- ~A global `EventQueue` is necessary for dropping `Root`. Should this be exposed?~ No. This is no longer required for the design.
-- ~The global `EventQueue` requires instance data. Are we okay using an [experimental](https://nodejs.org/api/n-api.html#n_api_environment_life_cycle_apis) API?~ This is no longer required for the design.
-- ~Should `EventQueue::send` accept a closure that returns `()` instead of `NeonResult<()>`?~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement.
+- ~Should `Channel` be `Arc` wrapped internally to encourage users to share instances across threads?~ No. External `Arc` wrapping makes shared mutable state more obvious and allows users to optimize reference counting.
+- ~A global `Channel` is necessary for dropping `Root`. Should this be exposed?~ No. This is no longer required for the design.
+- ~The global `Channel` requires instance data. Are we okay using an [experimental](https://nodejs.org/api/n-api.html#n_api_environment_life_cycle_apis) API?~ This is no longer required for the design.
+- ~Should `Channel::send` accept a closure that returns `()` instead of `NeonResult<()>`?~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement.
 - ~`persistent(&mut cx)` is a little difficult to type. Should it have a less complicated name?~ Changed the name to `Root` which is a common term when describing garbage collection.
