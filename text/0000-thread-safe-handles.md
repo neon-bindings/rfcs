@@ -361,14 +361,16 @@ impl Channel {
 
     /// Schedules a closure to execute on the JavaScript thread that created this `Channel`
     /// Will panic if there is an error scheduling a callback from libuv
-    pub fn send(
-        &self,
-        f: impl FnOnce(TaskContext) -> NeonResult<()>,
-    );
+    pub fn send<T, F>(&self, f: F) -> JoinHandle<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(TaskContext) -> NeonResult<T> + Send + 'static;
 
     /// Schedules a closure to execute on the JavaScript thread that created this Channel
-    pub fn try_send<F>(&self, f: F) -> Result<(), SendError>
-        where F: FnOnce(TaskContext) -> NeonResult<()>;
+    pub fn try_send<T, F>(&self, f: F) -> Result<JoinHandle<T>, SendError>
+        where
+            T: Send + 'static,
+            F: FnOnce(TaskContext) -> NeonResult<T> + Send + 'static;
 }
 ```
 
@@ -400,6 +402,28 @@ impl Error for SendError {}
 Internally, channels contain a queue for events. Each distinct channel has a separate queue. However, `Channel` may also be *cloned*. When cloning a channel, the internal queue is *shared*. This will result in better performance for most use cases since Node contains an optimization to process multiple events from a single queue within the same tick.
 
 See the shared channel [proposal](https://github.com/neon-bindings/rfcs/pull/42) and [implementation](https://github.com/neon-bindings/neon/pull/739) for more details.
+
+#### `JoinHandle`
+
+Similar to [`std::thread::spawn`](https://doc.rust-lang.org/std/thread/fn.spawn.html) and [`tokio::spawn`](https://docs.rs/tokio/1.11.0/tokio/fn.spawn.html), `Channel::send` returns a `JoinHandle`. A join handle may be used to optionally synchronize threads to join the result. It can be used to wait until a closure has been executed and access the return value.
+
+```rust
+impl JoinHandle<T> {
+    fn join(self) -> Result<T, JoinError>;
+}
+```
+
+`JoinHandle::join` may fail if the closure has panicked or if a JavaScript exception was thrown.
+
+```rust
+struct JoinError(());
+
+impl Error for JoinError {}
+```
+
+##### Future Expansion
+
+Initially, `JoinHandle` will only provide a `join` method. However, in the future, it may also implement `std::future::Future` to `await` the result.
 
 #### `trait Context`
 
@@ -458,15 +482,17 @@ impl Channel {
 
     /// Schedules a closure to execute on the JavaScript thread that created this Channel
     /// Blocks if the event queue is full
-    pub fn send(
-        &self,
-        f: impl FnOnce(TaskContext) -> NeonResult<()>,
-    ) -> Result<(), SendError>;
+    pub fn send<T, F>(&self, f: F) -> Result<JoinHandle<T>, SendError>
+        where
+            T: Send + 'static,
+            F: FnOnce(TaskContext) -> NeonResult<T> + Send + 'static;
 
     /// Schedules a closure to execute on the JavaScript thread that created this `Channel`
     /// Non-blocking
-    pub fn try_send<F>(&self, f: F) -> Result<(), SendError<F>>
-        where F: FnOnce(TaskContext) -> NeonResult<()>;
+    pub fn try_send<T, F>(&self, f: F) -> Result<JoinHandle<T>, SendError<F>>
+        where
+            T: Send + 'static,
+            F: FnOnce(TaskContext) -> NeonResult<T> + Send + 'static;
 }
 
 enum SendError<F> {
@@ -507,9 +533,7 @@ These are fairly thin wrappers around N-API primitives. The most compelling alte
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-- ~Should this be implemented for the legacy runtime or only n-api?~ Only for `n-api`.
-- ~Should `Channel` be `Arc` wrapped internally to encourage users to share instances across threads?~ Yes. Cloning a `Channel` is well defined.
-- ~A global `Channel` is necessary for dropping `Root`. Should this be exposed?~ No. This is no longer required for the design.
-- ~The global `Channel` requires instance data. Are we okay using an [experimental](https://nodejs.org/api/n-api.html#n_api_environment_life_cycle_apis) API?~ This is no longer required for the design.
-- ~Should `Channel::send` accept a closure that returns `()` instead of `NeonResult<()>`?~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement. Also, this is now a `NeonResult<T>`.
-- ~`persistent(&mut cx)` is a little difficult to type. Should it have a less complicated name?~ Changed the name to `Root` which is a common term when describing garbage collection.
+- ~~Should this be implemented for the legacy runtime or only n-api?~~ Only for `n-api`.
+- ~~Should `Channel` be `Arc` wrapped internally to encourage users to share instances across threads?~~ Yes. Cloning a `Channel` is well defined.
+- ~~Should `Channel::send` accept a closure that returns `()` instead of `NeonResult<()>`?~~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement. Also, this is now a `NeonResult<T>`.
+- ~~`persistent(&mut cx)` is a little difficult to type. Should it have a less complicated name?~~ Changed the name to `Root` which is a common term when describing garbage collection.
