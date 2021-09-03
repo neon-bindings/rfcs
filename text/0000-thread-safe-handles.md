@@ -241,7 +241,7 @@ fn my_counter_incr(cx: FunctionContext) -> JsResult<JsUndefined> {
 
 `Root<_>` are `'static` references to objects on the v8 heap. If objects are moved, the internal pointer will be updated.
 
-_`Root` references may only be used for `Object` and `Function` types. This is a limitation of `n-api`._
+_`Root` references may only be used for `Object` and `Function` types. This is a limitation of Node-API._
 
 ```rust
 /// `Send` Root handle to JavaScript objects
@@ -326,7 +326,7 @@ impl MyCallback {
 
 A `Root<_>` can only be dropped on the JavaScript thread that created it because they include a non-atomic reference count. There are two ways to safely drop a `Root`: `Root::into_inner` and `Root::drop`.
 
-The `Drop` implementation of `Root` will `panic` to alert users of the leak and guide them towards correct usage.
+The `Drop` implementation of `Root` will `panic` on Node-API Version < 6  to alert users of the leak and guide them towards correct usage. On version 6+, a global drop queue (stored with instance data) will safely drop the `Root`.
 
 ```rust
 impl Drop for Root {
@@ -340,7 +340,7 @@ impl Drop for Root {
 
 In the future, neon may include a higher level construct that abstracts away this error prone usage.
 
-### `neon::unbounded::Channel`
+### `neon::event::Channel`
 
 ```rust
 impl Channel {
@@ -395,14 +395,22 @@ impl Error for SendError {}
 
 `Channel` are both `Send` and `Sync` since N-API threadsafe functions include reference counting and synchronization.
 
+#### `Channel: Clone`
+
+Internally, channels contain a queue for events. Each distinct channel has a separate queue. However, `Channel` may also be *cloned*. When cloning a channel, the internal queue is *shared*. This will result in better performance for most use cases since Node contains an optimization to process multiple events from a single queue within the same tick.
+
+See the shared channel [proposal](https://github.com/neon-bindings/rfcs/pull/42) and [implementation](https://github.com/neon-bindings/neon/pull/739) for more details.
+
 #### `trait Context`
 
-The idiomatic way to create an `Channel` is from a `Context.
+The idiomatic way to create an `Channel` is from a `Context. On Node-API 6+, the returned `Channel` will be a *clone* of a global `Channel` and share a backing queue with other instances created with `cx.channel()`.
 
 ```rust
 trait Context<'a> {
     fn channel(&mut self) -> Channel {
-        Channel::new(self)
+        // On Node-API < 6, create a queue
+        // On Node-API 6+ return a clone of a globally shared queue
+        todo!()
     }
 }
 ```
@@ -496,43 +504,12 @@ It's also important to note that `Task` and `TaskBuilder` give access to the Nod
 
 These are fairly thin wrappers around N-API primitives. The most compelling alternatives are continuing to improve the existing high level APIs.
 
-## `Channel: Clone`
-
-Since N-API threadsafe functions include a reference count, it's possible to safely implement `Clone`. However, this has a couple of disadvantages.
-
-Primarily, it makes expressing `unref` and `reference` awkward. These methods mutate the state of the threadsafe function using the JavaScript `Env` to enforce synchronization. Since there is no obvious wrapper providing interior mutability, it may be unclear that mutating an `Channel` will also impact its clones.
-
-```rust
-let channel = cx.channel();
-let mut channel_copy = channel.clone();
-
-// `queue` is neither mutable or in any obvious way related to `channel_copy` but, it is also `unref`
-channel_copy.unref();
-```
-
-Alternatively, `unref` can produce a new `Channel`. However, this makes it impossible to switch an `Channel` back and forth. This could be desirable to allow only keeping the event loop alive while an event is queued. For example:
-
-```rust
-let mut channel = cx.channel();
-
-channel.unref();
-
-// We're about to queue an event
-channel.reference();
-channel.send(move |cx| {
-    // Done. We can let the process exit.
-    channel.unref();
-
-    Ok(())
-});
-```
-
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
 - ~Should this be implemented for the legacy runtime or only n-api?~ Only for `n-api`.
-- ~Should `Channel` be `Arc` wrapped internally to encourage users to share instances across threads?~ No. External `Arc` wrapping makes shared mutable state more obvious and allows users to optimize reference counting.
+- ~Should `Channel` be `Arc` wrapped internally to encourage users to share instances across threads?~ Yes. Cloning a `Channel` is well defined.
 - ~A global `Channel` is necessary for dropping `Root`. Should this be exposed?~ No. This is no longer required for the design.
 - ~The global `Channel` requires instance data. Are we okay using an [experimental](https://nodejs.org/api/n-api.html#n_api_environment_life_cycle_apis) API?~ This is no longer required for the design.
-- ~Should `Channel::send` accept a closure that returns `()` instead of `NeonResult<()>`?~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement.
+- ~Should `Channel::send` accept a closure that returns `()` instead of `NeonResult<()>`?~ In most cases, the user will want to allow `Throw` to become an `uncaughtException` instead of a `panic` and `NeonResult<()>` provides a small ergonomics improvement. Also, this is now a `NeonResult<T>`.
 - ~`persistent(&mut cx)` is a little difficult to type. Should it have a less complicated name?~ Changed the name to `Root` which is a common term when describing garbage collection.
