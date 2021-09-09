@@ -1,26 +1,46 @@
-- Feature Name: `JsPromise`
+- Feature Name: `JsPromise` and `TaskBuilder`
 - Start Date: 2020-09-17
 - RFC PR: (leave this empty)
 - Neon Issue: (leave this empty)
 
-# Summary
+## Summary
 [summary]: #summary
+
+Provides an ergonomic API for executing tasks on the libuv threadpool and notifying JavaScript on the main thread with a result.
+
+This RFC provides for two related, but distinct features: `JsPromise` and `TaskBuilder`. Since users will frequently be interacting with both, designing the two in tandem will result in a better design.
+
+### `JsPromise`
 
 Provide an API for creating, resolving and rejecting JavaScript Promises.
 
 ```rust
 fn return_a_promise(cx: FunctionContext) -> JsResult<JsPromise> {
-    let (promise, deferred) = cx.promise();
+    let (deferred, promise) = cx.promise();
     let msg = cx.string("Hello, World!");
 
-    deferred.resolve(&cx, msg);
+    deferred.resolve(&mut cx, msg);
 
     Ok(promise)
 }
 ```
 
-# Motivation
+### `TaskBuilder`
+
+Provide an API for executing Rust closures on the libuv threadpool.
+
+```rust
+cx.task(|| { /* Executes asynchronously on the threadpool */ })
+    .complete(|cx, result| {
+        // Executes on the main JavaScript thread
+        Ok(())
+    });
+```
+
+## Motivation
 [motivation]: #motivation
+
+### `JsPromise`
 
 JavaScript Promise support has been a [long requested feature](https://github.com/neon-bindings/neon/issues/73). Promises are desirable for several reasons:
 
@@ -28,50 +48,55 @@ JavaScript Promise support has been a [long requested feature](https://github.co
 * Enable `await` syntax for asynchronous operations
 * More easily map to asynchronous operations in native code
 
-Additionally, they can be combined with the [`EventQueue`](https://github.com/neon-bindings/rfcs/pull/32) API for very simple asynchronous threaded usage.
+### `TaskBuilder`
 
-```rust
-fn real_threads(cx: FunctionContext) -> JsResult<JsPromise> {
-    let queue = cx.queue();
-    let (promise, deferred) = cx.promise();
+The legacy backend for Neon provided the [`Task`](https://docs.rs/neon/0.8.3/neon/task/trait.Task.html) trait for executing tasks on the libuv threadpool. However, boilerplate heavy implementations and ergonomic issues with ownership inspired the [`TaskBuilder` RFC](https://github.com/neon-bindings/rfcs/pull/30). This RFC is a successor, targeting only the Node-API backend with a heavy emphasis on promises.
 
-    std::thread::spawn(move || {
-        let result = perform_complex_operation();
-    
-        queue.send(move || {
-            let result = cx.number(result);
+Originally, it was thought that `Channel` could replace the need for running tasks on the libuv pool; however, there are many benefits to providing this functionality as well:
 
-            deferred.resolve(&cx, result);
-        });
-    });
+* Better CPU scheduling with a single task queue
+* Easier integration for users that do not have a preferred threadpool
 
-    Ok(promise)
-}
-```
+More details are available in the Node.js [guides](https://nodejs.org/en/docs/guides/dont-block-the-event-loop/#don-t-block-the-worker-pool).
 
-# Guide-level explanation
+## Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Before `Promise`, callbacks of the form `function (err, value)` were very common in JavaScript. Neon has excellent for for these "node style" callbacks in the `Task` trait.
+### `JsPromise`
+
+Before `Promise`, callbacks of the form `function (err, value)` were very common in JavaScript. These callbacks are the predominant form of continuation in Neon.
 
 ```rust
-fn fibonacci_async(mut cx: FunctionContext) -> JsResult<JsUndefined> {
-    let n = cx.argument::<JsNumber>(0)?.value() as usize;
-    let cb = cx.argument::<JsFunction>(1)?;
+fn task(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let name = cx.argument::<JsString>(0)?.value(&mut cx);
+    let cb = cx.argument::<JsFunction>(1)?.root(&mut cx);
+    let channel = cx.channel();
 
-    FibonacciTask::new(n).schedule(cb);
+    std::thread::spawn(move || {
+        let greeting = format!("Hello, {}!", name);
+
+        channel.send(move |mut cx| {
+            let cb = cb.into_inner(&mut cx);
+            let this = cx.undefined();
+            let args = [cx.null().upcast::<JsValue>(), cx.string(greeting).upcast()];
+
+            cb.call(&mut cx, this, args)?;
+
+            Ok(())
+        });
+    });
 
     Ok(cx.undefined())
 }
 ```
 
-However, in idiomatic JavaScript, this should method should return a promise. This can be solved with some glue code in JavaScript:
+However, in idiomatic JavaScript, this method should return a promise. This can be solved with some glue code in JavaScript:
 
 ```js
 const util = require('util');
 const native = require('../native');
 
-export const fibonacciAsync = util.promisify(native.fibonacci_async);
+export const taskAsync = util.promisify(native.task);
 ```
 
 Alternatively, a `Promise` can be constructed directly in Neon. Unlike an asynchronous method that accepts a callback, a method that returns a promise requires two parts:
@@ -103,11 +128,11 @@ function deferred() {
         deferred.reject = reject;
     });
 
-    return [promise, deferred];
+    return [deferred, promise];
 }
 
 function asyncMethod() {
-    const [promise, d] = deferred();
+    const [d, promise] = deferred();
 
     setTimeout(() => d.resolve(), 5000);
 
@@ -119,36 +144,102 @@ This could be written in Neon with the following:
 
 ```rust
 fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
-    let queue = cx.queue();
-    let (promise, d) = cx.promise();
+    let channel = cx.channel();
+    let (deferred, promise) = cx.promise();
 
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(5000));
 
-        queue.send(|cx| d.resolve(cx.undefined()));
+        channel.send(move |mut cx| {
+            let value = cx.undefined();
+            deferred.resolve(&mut cx, value);
+            Ok(())
+        });
     });
 
     Ok(promise)
 }
 ```
 
-# Reference-level explanation
+However, there are still some subtle gotchas. What if there is a JavaScript exception? What if I don't resolve the `Deferred`? To help, `Deferred::settle_with` is provided as a helper that combines `cx.try_catch(...)` with `Deferred` resolution or rejection:
+
+```rust
+channel.send(move |mut cx| {
+    deferred.settle_with(&mut cx, |cx| Ok(cx.undefined()));
+});
+```
+
+### `TaskBuilder`
+
+Tasks are asynchronously executed units of work performed on the libuv threadpool. A task consists of two parts:
+
+* An `execute` callback that runs on the libuv threadpool
+* A `complete` callback that receives the result of `execute` and runs on the main JavaScript thread
+
+The `execute` code is typically the slow _native_ operation asynchronously executed, while `complete` handles converting back to JavaScript values and resuming JavaScript execution with the result.
+
+For example, consider the previous `JsPromise` example that executes on a Rust thread. A similar result can be achieved by running on the libuv threadpool instead:
+
+```rust
+fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
+    let (deferred, promise) = cx.promise();
+
+    cx.task(|| std::thread::sleep(std::time::Duration::from_millis(5000)))
+        .complete(move |cx, _result| {
+            let value = cx.undefined();
+            deferred.resolve(&mut cx, value);
+            Ok(())
+        });
+
+    Ok(promise)
+}
+```
+
+However, since most of the time tasks will complete by settling a promise, a convenience method is provided to handle creating and settling a promise:
+
+```rust
+fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
+    let promise = cx
+        .task(|| std::thread::sleep(std::time::Duration::from_millis(5000)))
+        .promise(|cx, _result| Ok(cx.undefined()));
+
+    Ok(promise)
+}
+```
+
+`TaskBuilder::complete` and `TaskBuilder::promise` are both thunks that consume the builder, creating and queueing the task.
+
+## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
+
+### `JsPromise`
 
 The `JsPromise` API consists of two structs:
 
 * `JsPromise`. Opaque value; only useful for passing back to JavaScript.
 * `Deferred`. Handle for resolving and rejecting the related `Promise`.
 
-They may only be created with the `deferred` method on `Context`.
+They are most idiomatically crated by `cx.promise()`, but construction is mirrored across `JsPromise` and `Deferred`.
 
 ```rust
 trait Context {
-    fn deferred(&mut self) -> (Handle<JsPromise>, Deferred);
+    fn promise(&mut self) -> (Deferred, Handle<JsPromise>);
+}
+
+impl JsPromise {
+    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
+        todo!()
+    }
+}
+
+impl Deferred {
+    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
+        todo!()
+    }
 }
 ```
 
-## `JsPromise`
+#### `JsPromise`
 
 Opaque handle that represents a JavaScript `Promise`. It is not threadsafe.
 
@@ -172,22 +263,20 @@ impl ValueInternal for JsPromise {
     }
 }
 
-unsafe impl This for JsPromise {
-    fn as_this(_env: Env, h: raw::Local) -> Self {
-        JsPromise(h)
-    }
-}
+impl Object for JsPromise {}
 
 impl JsPromise {
-    pub(crate) fn new_internal<'a>(value: raw::Local) -> Handle<'a, JsPromise> {
-        Handle::new_internal(JsPromise(value))
+    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
+        todo!()
     }
 }
 ```
 
-## `Deferred`
+#### `Deferred`
 
 `Send` handle for resolving or rejecting a `JsPromise`.
+
+Resolving a `Deferred` always takes ownership of `self` and consumes the `Deferred` to prevent double settlement.
 
 ```rust
 pub struct Deferred(*mut c_void);
@@ -196,17 +285,21 @@ unsafe impl Send for Deferred {}
 
 impl Deferred {
     /// Resolves a deferred Promise with the value
-    fn resolve<'a, C: Context<'a>, T: Value>(self, cx: &mut C, v: Handle<T>);
+    pub fn resolve<'a, T: Value, C: Context<'a>>(self, cx: &mut C, v: Handle<T>);
 
     /// Rejects a deferred Promise with the error
-    fn reject<'a, C: Context<'a>, E: Value>(self, cx: &mut C, err: Handle<E>);
+    pub fn reject<'a, E: Value, C: Context<'a>>(self, cx: &mut C, err: Handle<E>);
 
-    /// Resolves or rejects a deferred Promise with the contents of a `Result`
-    fn complete<'a, C: Context<'a>, T: Value, E: Value>(self, cx: &mut C, result: Result<T, E>);
+    /// Resolves or rejects a Promise with the result of a closure
+    pub fn settle_with<'a, T, C, F>(self, cx: &mut C, f: F)
+    where
+        T: Value,
+        C: Context<'a>,
+        F: FnOnce(&mut C) -> JsResult<'a, T>;
 }
 ```
 
-Similar to [`Persistent`](https://github.com/neon-bindings/rfcs/pull/32), if a `Deferred` is not resolved or rejected, the `Promise` will leak. To help catch this and guide users towards a correct implementation, `Deferred` should `panic` on `Drop` if not used.
+Similar to [`Root`](https://github.com/neon-bindings/rfcs/pull/32), if a `Deferred` is not resolved or rejected, the `Promise` chain will leak. To help catch this and guide users towards a correct implementation, `Deferred` should `panic` on `Drop` if not used on Node-API < 4 and be dropped on a global drop queue in Node-API >= 4.
 
 ```rust
 impl std::ops::Drop for Deferred {
@@ -216,30 +309,75 @@ impl std::ops::Drop for Deferred {
 }
 ```
 
-# Drawbacks
-[drawbacks]: #drawbacks
+### `TaskBuilder`
 
-None? :grin:
-
-# Rationale and alternatives
-[alternatives]: #alternatives
-
-## High Level Promise Tasks
-
-Using `JsPromise` along with other async features requires careful and verbose usage of several features (`JsPromise`, `EventQueue` and `try_catch`). Neon could exclusively provide a high-level API similar to `Task` or the proposed `TaskBuilder`.
+`TaskBuilder` follows the [builder pattern](https://doc.rust-lang.org/1.0.0/style/ownership/builders.html) for constructing and scheduling a task.
 
 ```rust
-fn async_task(cx: FunctionContext) -> JsResult<JsPromise> {
-    let promise = cx.task(|| /* perform async task */)
-        .complete(|cx| /* convert to js types */);
+pub struct TaskBuilder<'cx, C, E> {
+    // Hold a reference to `Context` so thunks do not require it as an argument
+    cx: &'cx mut C,
+    // Callback to execute on the libuv threadpool; complete is provided as part
+    // of the thunk
+    execute: E,
+}
 
-    Ok(promise)
+impl<'a: 'cx, 'cx, C, O, E> TaskBuilder<'cx, C, E>
+where
+    C: Context<'a>,
+    O: Send + 'static,
+    E: FnOnce() -> O + Send + 'static,
+{
+    /// Constructs a new `TaskBuilder`
+    ///
+    /// See [`Context::task`] for more idiomatic usage
+    pub fn new(cx: &'cx mut C, execute: E) -> Self {
+        Self { cx, execute }
+    }
+
+    /// Creates a promise and schedules the task to be executed, resolving
+    /// the promise with the result of the callback
+    pub fn promise<V, F>(self, complete: F) -> Handle<'a, JsPromise>
+        where
+            V: Value,
+            for<'b> F: FnOnce(&mut TaskContext<'b>, O) -> JsResult<'b, V> + Send + 'static,
+    {
+        todo!()
+    }
+
+    /// Schedules the task to be executed, invoking the `complete` callback from
+    /// the JavaScript main thread with the result of `execute`
+    pub fn complete<F>(self, complete: F)
+        where
+            F: FnOnce(&mut TaskContext, O) -> NeonResult<()> + Send + 'static,
+    {
+        todo!()
+    }
+}
+
+trait Context<'a> {
+    fn task<'cx, O, E>(&'cx mut self, execute: E) -> TaskBuilder<Self, E>
+        where
+            'a: 'cx,
+            O: Send + 'static,
+            E: FnOnce() -> O + Send + 'static,
+    {
+        TaskBuilder::new(self, execute)
+    }
 }
 ```
 
-This API is very ergonomic, but removes a considerable amount of flexibility and power from the user. Instead, the initial implementation will focus on orthogonal core primitives like `Persistent`, `EventQueue`, `JsBox` and `JsPromise` that can later be combined into high-level APIs.
+Internally, `TaskBuilder` uses [`napi_async_work`](https://nodejs.org/api/n-api.html#n_api_simple_asynchronous_operations) for creating and scheduling tasks.
 
-## Common `Deferred` pattern
+## Drawbacks
+[drawbacks]: #drawbacks
+
+The most significant drawback is that the user is presented with many more options for asynchronous programming without clear direction on which to use. Neon will need to lean on documentation to guide users to the correct APIs for various situations. 
+
+## Rationale and alternatives
+[alternatives]: #alternatives
+
+### Common `Deferred` pattern
 
 Most promise libraries that provide a `Deferred` object provide the `promise` as part of that object. Neon might have a similar approach:
 
@@ -254,7 +392,25 @@ The issue with this approach is that `Deferred` is `Send` and `JsPromise` is *no
 
 Instead a tuple is returned, similar to `(sender, receiver)` returned from `std::sync::mpsc::channel`.
 
-# Unresolved questions
+### Low level async work
+
+Neon could provide a lower level `AsyncWork` or `trait` that only accepts static function pointers and `&mut data` instead of consuming data. However, this would push complexity down for threading consumable state, try/catch and several other subtle issues. It is also boilerplate heavy.
+
+### Catching panics
+
+A `panic` in a `TaskBuilder::promise` will drop the promise without resolution. We could catch the unwind and convert to a rejection; however, catching panics is not considered best practice. Since we do not require catching unwind to prevent unsound unwinding across FFI, it's better to have a course grained control where the `Deferred` rejects when it drops without being settled.
+
+## Future Expansion
+
+Node-API allows async work to be [cancelled](https://nodejs.org/api/n-api.html#n_api_napi_cancel_async_work) after it has been scheduled, but before it has executed. This is left as future improvement since we do not have a clear use case in mind and it can be added without breaking changes.
+
+Two patterns for adding it without breaking change:
+* Add `fn handle(&self) -> TaskHandle` to `TaskBuilder` to allow creating cancellation handles before scheduling
+* Add methods that return a cancellation handle in addition to the thunk (e.g., `fn cancellable_promise(self, f: F) -> (TaskHandle, Handle<JsPromise>)`
+
+## Unresolved questions
 [unresolved]: #unresolved-questions
 
-- Should there be a constructor method on `JsPromise`? This is slightly awkward because it's impossible to create a `Promise` without also creating a `Deferred`.
+* Are the thunk names `TaskBuilder::promise` and `TaskBuilder::complete` clear?
+* Is it helpful to mirror deferred constructors across all types instead of only having `cx.promise()`?
+* Is `cx.promise()` a good name or would `cx.deferred()` be better?
