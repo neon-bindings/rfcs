@@ -457,3 +457,4 @@ Two patterns for adding it without breaking change:
 * Are the thunk names `TaskBuilder::promise` and `TaskBuilder::complete` clear?
 * Is it helpful to mirror deferred constructors across all types instead of only having `cx.promise()`?
 * Is `cx.promise()` a good name or would `cx.deferred()` be better?
+* Is `Channel::send_and_settle` a good name? Is this API valuable or is the nested closure acceptable and clearer?
