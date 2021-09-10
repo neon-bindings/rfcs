@@ -320,7 +320,7 @@ channel.send(move |mut cx| {
 });
 ```
 
-Example with `Channe::send_and_settle`:
+Example with `Channel::send_and_settle`:
 
 ```rust
 channel.send_and_settle(deferred, |cx| Ok(cx.undefined()));
@@ -330,10 +330,22 @@ channel.send_and_settle(deferred, |cx| Ok(cx.undefined()));
 impl Channel {
     /// Settle a deferred promise with the value returned from a closure or the
     /// exception thrown
+    ///
+    /// Panics if sending fails
     pub fn send_and_settle<V, F>(&self, f: F)
     where
         V: Value,
         for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
+    {
+        todo!()
+    }
+
+    /// Settle a deferred promise with the value returned from a closure or the
+    /// exception thrown
+    pub fn try_send_and_settle<V, F>(&self, f: F) -> Result<(), SendError>
+        where
+            V: Value,
+            for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
     {
         todo!()
     }
