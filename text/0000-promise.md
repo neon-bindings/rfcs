@@ -309,6 +309,37 @@ impl std::ops::Drop for Deferred {
 }
 ```
 
+#### `Channel` extension
+
+A new method `Channel::send_and_settle` is added to reduce the boilerplate of nested closures from `Channel::send` and `Deferred::settle_with`. Example without the convenience method:
+
+```rust
+channel.send(move |mut cx| {
+    deferred.settle_with(&mut cx, |cx| Ok(cx.undefined()));
+    Ok(())
+});
+```
+
+Example with `Channe::send_and_settle`:
+
+```rust
+channel.send_and_settle(deferred, |cx| Ok(cx.undefined()));
+```
+
+```rust
+impl Channel {
+    /// Settle a deferred promise with the value returned from a closure or the
+    /// exception thrown
+    pub fn send_and_settle<V, F>(&self, f: F)
+    where
+        V: Value,
+        for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
+    {
+        todo!()
+    }
+}
+```
+
 ### `TaskBuilder`
 
 `TaskBuilder` follows the [builder pattern](https://doc.rust-lang.org/1.0.0/style/ownership/builders.html) for constructing and scheduling a task.
