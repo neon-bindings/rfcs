@@ -312,7 +312,7 @@ impl Channel {
     /// exception thrown
     ///
     /// Panics if sending fails
-    pub fn settle_with<V, F>(&self, f: F)
+    pub fn settle_with<V, F>(&self, f: F) -> JoinHandle<()>
     where
         V: Value,
         for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
@@ -322,7 +322,7 @@ impl Channel {
 
     /// Settle a deferred promise with the value returned from a closure or the
     /// exception thrown
-    pub fn try_settle_with<V, F>(&self, f: F) -> Result<(), SendError>
+    pub fn try_settle_with<V, F>(&self, f: F) -> Result<JoinHandle<()>, SendError>
         where
             V: Value,
             for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
