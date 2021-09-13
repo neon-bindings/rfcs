@@ -6,8 +6,6 @@
 ## Summary
 [summary]: #summary
 
-Provides an ergonomic API for executing tasks on the libuv threadpool and notifying JavaScript on the main thread with a result.
-
 This RFC provides for two related, but distinct features: `JsPromise` and `TaskBuilder`. Since users will frequently be interacting with both, designing the two in tandem will result in a better design.
 
 ### `JsPromise`
@@ -31,7 +29,7 @@ Provide an API for executing Rust closures on the libuv threadpool.
 
 ```rust
 cx.task(|| { /* Executes asynchronously on the threadpool */ })
-    .complete(|cx, result| {
+    .and_then(|cx, result| {
         // Executes on the main JavaScript thread
         Ok(())
     });
@@ -176,7 +174,7 @@ Tasks are asynchronously executed units of work performed on the libuv threadpoo
 * An `execute` callback that runs on the libuv threadpool
 * A `complete` callback that receives the result of `execute` and runs on the main JavaScript thread
 
-The `execute` code is typically the slow _native_ operation asynchronously executed, while `complete` handles converting back to JavaScript values and resuming JavaScript execution with the result.
+The `execute` code is typically the slow _native_ operation asynchronously executed, while `and_then` handles converting back to JavaScript values and resuming JavaScript execution with the result.
 
 For example, consider the previous `JsPromise` example that executes on a Rust thread. A similar result can be achieved by running on the libuv threadpool instead:
 
@@ -185,7 +183,7 @@ fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
     let (deferred, promise) = cx.promise();
 
     cx.task(|| std::thread::sleep(std::time::Duration::from_millis(5000)))
-        .complete(move |cx, _result| {
+        .and_then(move |cx, _result| {
             let value = cx.undefined();
             deferred.resolve(&mut cx, value);
             Ok(())
@@ -207,7 +205,7 @@ fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
 }
 ```
 
-`TaskBuilder::complete` and `TaskBuilder::promise` are both thunks that consume the builder, creating and queueing the task.
+`TaskBuilder::and_then` and `TaskBuilder::promise` are both thunks that consume the builder, creating and queueing the task.
 
 ## Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -219,23 +217,11 @@ The `JsPromise` API consists of two structs:
 * `JsPromise`. Opaque value; only useful for passing back to JavaScript.
 * `Deferred`. Handle for resolving and rejecting the related `Promise`.
 
-They are most idiomatically crated by `cx.promise()`, but construction is mirrored across `JsPromise` and `Deferred`.
+`JsPromise` may only be constructed directly with `cx.promise()` instead of with `JsPromise::new` or `Deferred::new`. This is because they may not be constructed independently and it follows the convetion of `std::sync::mpsc::channel`.
 
 ```rust
 trait Context {
     fn promise(&mut self) -> (Deferred, Handle<JsPromise>);
-}
-
-impl JsPromise {
-    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
-        todo!()
-    }
-}
-
-impl Deferred {
-    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
-        todo!()
-    }
 }
 ```
 
@@ -264,12 +250,6 @@ impl ValueInternal for JsPromise {
 }
 
 impl Object for JsPromise {}
-
-impl JsPromise {
-    pub fn new<'a, C: Context<'a>>(cx: &mut C) -> (Deferred, Handle<'a, JsPromise>) {
-        todo!()
-    }
-}
 ```
 
 #### `Deferred`
@@ -311,7 +291,7 @@ impl std::ops::Drop for Deferred {
 
 #### `Channel` extension
 
-A new method `Channel::send_and_settle` is added to reduce the boilerplate of nested closures from `Channel::send` and `Deferred::settle_with`. Example without the convenience method:
+A new method `Channel::settle_with` is added to reduce the boilerplate of nested closures from `Channel::send` and `Deferred::settle_with`. Example without the convenience method:
 
 ```rust
 channel.send(move |mut cx| {
@@ -320,10 +300,10 @@ channel.send(move |mut cx| {
 });
 ```
 
-Example with `Channel::send_and_settle`:
+Example with `Channel::settle_with`:
 
 ```rust
-channel.send_and_settle(deferred, |cx| Ok(cx.undefined()));
+channel.settle_with(deferred, |cx| Ok(cx.undefined()));
 ```
 
 ```rust
@@ -332,7 +312,7 @@ impl Channel {
     /// exception thrown
     ///
     /// Panics if sending fails
-    pub fn send_and_settle<V, F>(&self, f: F)
+    pub fn settle_with<V, F>(&self, f: F)
     where
         V: Value,
         for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
@@ -342,7 +322,7 @@ impl Channel {
 
     /// Settle a deferred promise with the value returned from a closure or the
     /// exception thrown
-    pub fn try_send_and_settle<V, F>(&self, f: F) -> Result<(), SendError>
+    pub fn try_settle_with<V, F>(&self, f: F) -> Result<(), SendError>
         where
             V: Value,
             for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
@@ -388,9 +368,9 @@ where
         todo!()
     }
 
-    /// Schedules the task to be executed, invoking the `complete` callback from
+    /// Schedules the task to be executed, invoking the `and_then` callback from
     /// the JavaScript main thread with the result of `execute`
-    pub fn complete<F>(self, complete: F)
+    pub fn and_then<F>(self, complete: F)
         where
             F: FnOnce(&mut TaskContext, O) -> NeonResult<()> + Send + 'static,
     {
@@ -454,7 +434,7 @@ Two patterns for adding it without breaking change:
 ## Unresolved questions
 [unresolved]: #unresolved-questions
 
-* Are the thunk names `TaskBuilder::promise` and `TaskBuilder::complete` clear?
-* Is it helpful to mirror deferred constructors across all types instead of only having `cx.promise()`?
-* Is `cx.promise()` a good name or would `cx.deferred()` be better?
-* Is `Channel::send_and_settle` a good name? Is this API valuable or is the nested closure acceptable and clearer?
+* ~~Are the thunk names `TaskBuilder::promise` and `TaskBuilder::complete` clear?~~ `TaskBuilder::and_then` is a better match for Rust naming conventions.
+* ~~Is it helpful to mirror deferred constructors across all types instead of only having `cx.promise()`?~~ No, they will be removed to match `std::sync::mpsc::channel`.
+* ~~Is `cx.promise()` a good name or would `cx.deferred()` be better?~~ `cx.promise()` is better because `JsPromise` is the primary thing wanted and `Deferred` is an implementation detail.
+* ~~Is `Channel::send_and_settle` a good name? Is this API valuable or is the nested closure acceptable and clearer?~~ `Channel::settle_with` helps to describe the function by matching `Deferred::settle_with`.
