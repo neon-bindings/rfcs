@@ -159,12 +159,10 @@ fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
 }
 ```
 
-However, there are still some subtle gotchas. What if there is a JavaScript exception? What if I don't resolve the `Deferred`? To help, `Deferred::settle_with` is provided as a helper that combines `cx.try_catch(...)` with `Deferred` resolution or rejection:
+However, there are still some subtle gotchas. What if there is a JavaScript exception? What if I don't resolve the `Deferred`? To help, `Deferred::settle_with` is provided as a helper that combines `cx.try_catch(...)` and `Channel::send` with `Deferred` resolution or rejection:
 
 ```rust
-channel.send(move |mut cx| {
-    deferred.settle_with(&mut cx, |cx| Ok(cx.undefined()));
-});
+deferred.settle_with(&channel, |mut cx| Ok(cx.undefined()));
 ```
 
 ### `TaskBuilder`
@@ -183,7 +181,7 @@ fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
     let (deferred, promise) = cx.promise();
 
     cx.task(|| std::thread::sleep(std::time::Duration::from_millis(5000)))
-        .and_then(move |cx, _result| {
+        .and_then(move |mut cx, _result| {
             let value = cx.undefined();
             deferred.resolve(&mut cx, value);
             Ok(())
@@ -199,7 +197,7 @@ However, since most of the time tasks will complete by settling a promise, a con
 fn async_method(cx: FunctionContext) -> JsResult<JsPromise> {
     let promise = cx
         .task(|| std::thread::sleep(std::time::Duration::from_millis(5000)))
-        .promise(|cx, _result| Ok(cx.undefined()));
+        .promise(|mut cx, _result| Ok(cx.undefined()));
 
     Ok(promise)
 }
@@ -217,7 +215,7 @@ The `JsPromise` API consists of two structs:
 * `JsPromise`. Opaque value; only useful for passing back to JavaScript.
 * `Deferred`. Handle for resolving and rejecting the related `Promise`.
 
-`JsPromise` may only be constructed directly with `cx.promise()` instead of with `JsPromise::new` or `Deferred::new`. This is because they may not be constructed independently and it follows the convetion of `std::sync::mpsc::channel`.
+`JsPromise` may only be constructed directly with `cx.promise()` instead of with `JsPromise::new` or `Deferred::new`. This is because they may not be constructed independently, and it follows the convention of `std::sync::mpsc::channel`.
 
 ```rust
 trait Context {
@@ -270,64 +268,30 @@ impl Deferred {
     /// Rejects a deferred Promise with the error
     pub fn reject<'a, E: Value, C: Context<'a>>(self, cx: &mut C, err: Handle<E>);
 
-    /// Resolves or rejects a Promise with the result of a closure
-    pub fn settle_with<'a, T, C, F>(self, cx: &mut C, f: F)
+    /// Attempts to resolve a promise with the result of a closure sent across a closure
+    pub fn try_settle_with<V, F>(
+        self,
+        channel: &Channel,
+        complete: F,
+    ) -> Result<JoinHandle<()>, SendError>
     where
-        T: Value,
-        C: Context<'a>,
-        F: FnOnce(&mut C) -> JsResult<'a, T>;
+        V: Value,
+        F: FnOnce(TaskContext) -> JsResult<V> + Send + 'static;
+
+    /// Same as `Deferred::try_settle_with`, but panics if the closure could not be sent
+    pub fn settle_with<V, F>(self, channel: &Channel, complete: F) -> JoinHandle<()>
+    where
+        V: Value,
+        F: FnOnce(TaskContext) -> JsResult<V> + Send + 'static;
 }
 ```
 
-Similar to [`Root`](https://github.com/neon-bindings/rfcs/pull/32), if a `Deferred` is not resolved or rejected, the `Promise` chain will leak. To help catch this and guide users towards a correct implementation, `Deferred` should `panic` on `Drop` if not used on Node-API < 4 and be dropped on a global drop queue in Node-API >= 4.
+Similar to [`Root`](https://github.com/neon-bindings/rfcs/pull/32), if a `Deferred` is not resolved or rejected, the `Promise` chain will leak. To help catch this and guide users towards a correct implementation, `Deferred` should `panic` on `Drop` if used on Node-API < 4 and be dropped on a global drop queue in Node-API >= 4, rejecting the promise.
 
 ```rust
 impl std::ops::Drop for Deferred {
     fn drop(&mut self) {
         panic!("JsPromise leaked. Deferred must be used.");
-    }
-}
-```
-
-#### `Channel` extension
-
-A new method `Channel::settle_with` is added to reduce the boilerplate of nested closures from `Channel::send` and `Deferred::settle_with`. Example without the convenience method:
-
-```rust
-channel.send(move |mut cx| {
-    deferred.settle_with(&mut cx, |cx| Ok(cx.undefined()));
-    Ok(())
-});
-```
-
-Example with `Channel::settle_with`:
-
-```rust
-channel.settle_with(deferred, |cx| Ok(cx.undefined()));
-```
-
-```rust
-impl Channel {
-    /// Settle a deferred promise with the value returned from a closure or the
-    /// exception thrown
-    ///
-    /// Panics if sending fails
-    pub fn settle_with<V, F>(&self, f: F) -> JoinHandle<()>
-    where
-        V: Value,
-        for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
-    {
-        todo!()
-    }
-
-    /// Settle a deferred promise with the value returned from a closure or the
-    /// exception thrown
-    pub fn try_settle_with<V, F>(&self, f: F) -> Result<JoinHandle<()>, SendError>
-        where
-            V: Value,
-            for<'a> F: FnOnce(&mut TaskContext<'a>) -> JsResult<'a, Value> + Send + 'static,
-    {
-        todo!()
     }
 }
 ```
@@ -363,16 +327,18 @@ where
     pub fn promise<V, F>(self, complete: F) -> Handle<'a, JsPromise>
         where
             V: Value,
-            for<'b> F: FnOnce(&mut TaskContext<'b>, O) -> JsResult<'b, V> + Send + 'static,
+            F: FnOnce(TaskContext, O) -> JsResult<V> + Send + 'static,
     {
         todo!()
     }
 
     /// Schedules the task to be executed, invoking the `and_then` callback from
     /// the JavaScript main thread with the result of `execute`
+    ///
+    /// If the `task` panics, the `Err` will contain the value the thread panicked with
     pub fn and_then<F>(self, complete: F)
         where
-            F: FnOnce(&mut TaskContext, O) -> NeonResult<()> + Send + 'static,
+            F: FnOnce(TaskContext, std::thread::Result<O>) -> NeonResult<()> + Send + 'static,
     {
         todo!()
     }
@@ -391,6 +357,39 @@ trait Context<'a> {
 ```
 
 Internally, `TaskBuilder` uses [`napi_async_work`](https://nodejs.org/api/n-api.html#n_api_simple_asynchronous_operations) for creating and scheduling tasks.
+
+### Catching panics and exceptions
+
+Panics and exceptions are handled both in tasks that use promises and ones that do not.
+
+When using `TaskBuilder::promise`, the promise is rejected with the error. When using `TaskBuilder::and_then`, the error is passed as an `uncaughtException` on Node-API >= 3. On Node-API 1 and 2, the process is terminated with an error message.
+
+The following table describes the action taken and the shape of the error.
+
+| Task Thunk | Action              | Exception        | Panic            | Both             |
+| ---------- | ------------------- | ---------------- | ---------------- | ---------------- |
+| `and_then` | `uncaughtException` | `NeonAsyncError` | `NeonAsyncError` | `NeonAsyncError` |
+| `promise`  | `Promise.reject`    | `any`            | `NeonAsyncError` | `NeonAsyncError` |
+
+```ts
+interface NeonAsyncError extends Error {
+  // General message describing the error that occurred
+  message: string;
+  // If an exception occurred, the value that was thrown
+  cause?: any;
+  // If a panic ocurred, an Error representing the panic
+  panic?: PanicError;
+}
+
+interface PanicError extends Error {
+  // Panic message if it could be downcast to a String, otherwise generic message
+  message: string;
+  // If the panic could not be downcast as a String, the panic in a `JsBox`
+  cause?: JsBox
+}
+```
+
+Additionally, `Channel::send` and `Channel::try_send` are updated to behave identically to `TaskBuilder::and_then` when a panic or exception is thrown.
 
 ## Drawbacks
 [drawbacks]: #drawbacks
@@ -418,10 +417,6 @@ Instead a tuple is returned, similar to `(sender, receiver)` returned from `std:
 ### Low level async work
 
 Neon could provide a lower level `AsyncWork` or `trait` that only accepts static function pointers and `&mut data` instead of consuming data. However, this would push complexity down for threading consumable state, try/catch and several other subtle issues. It is also boilerplate heavy.
-
-### Catching panics
-
-A `panic` in a `TaskBuilder::promise` will drop the promise without resolution. We could catch the unwind and convert to a rejection; however, catching panics is not considered best practice. Since we do not require catching unwind to prevent unsound unwinding across FFI, it's better to have a course grained control where the `Deferred` rejects when it drops without being settled.
 
 ## Future Expansion
 
