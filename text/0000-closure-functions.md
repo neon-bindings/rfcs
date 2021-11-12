@@ -168,4 +168,4 @@ Instead, we will only provide this feature for Node-API 5+. This costs a small a
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-* ~~Do closures need to be `Send`?~~ `V8` heavily uses thread local storage for the vent loop. It would be an extremely large change to be able to switch the thread running the event loop. It would also require changes to `libuv`. Even thought it's not _guaranteed_ this won't change, it seems unlikely enough that the small risk is worth the improved API.
+* ~~Do closures need to be `Send`?~~ `V8` heavily uses thread local storage for the event loop. It would be an extremely large change to be able to switch the thread running the event loop. It would also require changes to `libuv`. Even thought it's not _guaranteed_ this won't change, it seems unlikely enough that the small risk is worth the improved API.
