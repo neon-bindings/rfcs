@@ -113,13 +113,21 @@ The `JsArrayBuffer` type gets a new method for constructing a `Region` struct, w
 
 ```rust
 impl Handle<'cx, JsArrayBuffer> {
-    pub fn region<T: Binary>(self, byte_offset: usize, len: usize) -> Region<'cx, T>;
+    pub fn region<T: Binary>(&self, offset: usize, len: usize) -> Region<'cx, T>;
+}
+```
+
+Since the above method only shows up in the documentation for `Handle`, the `JsArrayBuffer` type also gets a static method that behaves identically:
+
+```rust
+impl JsArrayBuffer {
+    pub fn region<'cx, T: Binary>(buffer: &Handle<'cx, JsArrayBuffer>, offset: usize, len: usize) -> Region<'cx, T>;
 }
 ```
 
 ### Helper types
 
-#### `neon::types::binary::Binary`
+#### `neon::types::buffer::Binary`
 
 The constructor functions require passing a type tag to Node-API functions, so this RFC defines a sealed `Binary` trait to define on all the primitive element types of typed arrays (`i8`, `u8`, `i16`, `u16`, etc) in order to define the type tag as an associated constant. This is exposed for documentation and to allow userland generic helper functions that work on all typed array types.
 
@@ -129,7 +137,7 @@ trait Binary: Sealed + Copy + Debug {
 }
 ```
 
-#### `neon::types::binary::Region`
+#### `neon::types::buffer::Region`
 
 The `Region` struct defines a region of an underlying buffer. For performance, it's not actually checked to be a valid region until actually constructing a typed array object. (Otherwise, every method on the type would have to re-validate every time it's called, because of the possibility of the buffer getting detached.)
 
@@ -139,8 +147,9 @@ struct Region<'cx, T: Binary> { /* hidden */ }
 
 impl<'cx, T: Binary> Region<'cx, T> {
     // Constructs a new typed array for this region.
-    pub fn to_typed_array<'c, C>(self, cx: &mut C) -> JsResult<'c, JsTypedArray<T>>
-    where C: Context<'c>;
+    pub fn to_typed_array<'c, C>(&self, cx: &mut C) -> JsResult<'c, JsTypedArray<T>>
+    where
+        C: Context<'c>;
 }
 ```
 
@@ -153,7 +162,7 @@ This RFC also defines a number of methods that query typed arrays for metadata.
 ```rust
 impl<T: Binary> JsTypedArray<T> {
     // Returns the region of the backing buffer for this typed array.
-    pub fn to_region<'cx, C>(
+    pub fn region<'cx, C>(
         &self,
         cx: &mut C,
     ) -> Region<'cx, T>
@@ -169,7 +178,7 @@ impl<T: Binary> JsTypedArray<T> {
         C: Context<'cx>;
 
     // Returns the byte offset into the backing buffer.
-    pub fn byte_offset<'cx, C>(
+    pub fn offset<'cx, C>(
         &self,
         cx: &mut C,
     ) -> usize
@@ -194,8 +203,8 @@ This RFC adds a convenience method to the `TypedArray` trait:
 pub trait TypedArray: Sealed {
     /* as before... */
 
-    // Returns the number of bytes in this typed array.
-    fn byte_length<'cx, C>(&self, cx: &mut C) -> usize
+    // Returns the size of this typed array in bytes.
+    fn size<'cx, C>(&self, cx: &mut C) -> usize
     where
         C: Context<'cx>;
 }
@@ -203,18 +212,21 @@ pub trait TypedArray: Sealed {
 
 ### `Region`
 
-The `Region` struct also defines a number of convenient queries.
+The `Region` struct also defines a number of convenience methods and combinators:
 
 ```rust
 impl<'cx, T: Binary> Region<'cx, T> {
+    // Returns the underlying ArrayBuffer for this region.
+    pub fn buffer(self) -> Handle<'cx, JsArrayBuffer>;
 
-pub fn buffer(self) -> Handle<'cx, JsArrayBuffer>;
+    // Returns the byte offset of this region from the start of the ArrayBuffer.
+    pub fn offset(self) -> usize;
 
-pub fn byte_offset(self) -> usize;
+    // Returns the number of elements of type T that fit in this region.
+    pub fn len(self) -> usize;
 
-pub fn len(self) -> usize;
-
-pub fn byte_length(self) -> usize;
+    // Returns the size of this region in bytes.
+    pub fn size(self) -> usize;
 }
 ```
 
@@ -226,9 +238,13 @@ There aren't any real drawbacks to exposing this functionality, since it's provi
 
 The main drawbacks of this RFC's proposed design are:
 
-## Naming inconsistency: `len()` vs `byte_length()`
+## Possible confusion between `len()` and `size()`
 
-This RFC goes with `len()` to match a strong Rust convention, and `byte_length()` to match the typed array naming convention (using snake case, of course). These does lead to an inconsistency between the two. A couple alternatives would be `byte_len()` or `size()`. But then `byte_len()` ends up feeling a bit inconsistent with `byte_offset()`. We could then choose `byte_off()` but that's a bit opaque.
+In JavaScript, these APIs are called `length` and `byteLength`, respectively, which helps disambiguate them and makes their units a bit more self-evident. Using `len` and `size` could lead to confusion between the two methods, and make their units less obvious. But `len()` and `size()` are idiomatic in Rust (see e.g. [`Vec::len()`][std::vec::Vec::len], [`str::len()`][std::primitive::str::len], [`Layout::size()`][std::alloc::Layout::size], [`Metadata::size()`][std::fs::Metadata::size]), so learning the distinction is useful for Rust developers anyway, and the API documentation should make the units explicit.
+
+## Inconsistency with JavaScript `length`, `byteLength`, and `byteOffset`
+
+Deviating from the JavaScript naming conventions of `length`, `byteLength`, and `byteOffset` could make these APIs less obvious or guessable for JavaScript developers. But it's better for Rust code to use Rust idioms, and the API docs should link to the corresponding JavaScript APIs to help make the connection more explicit.
 
 ## Unfortunate docs placement of `region()`
 
@@ -239,11 +255,17 @@ We could eliminate the underlying buffer from the `Region` data structure. Conve
 buffer.region(4, 2).to_typed_array(&mut cx, buffer)
 ```
 
+We could make `region()` a `&self` method of `JsArrayBuffer` and take a context reference in order to make the lifetime explicit, similar to [`JsFunction::call_with`][neon::types::JsFunction::call_with]. But not only would this be more verbose, it risks users stumbling into borrow errors due to the need to borrow the context (unlike `CallOptions`, which is generally just used as a temporary builder, a `Region` is likely to be passed around for larger sections of code).
+
+We opted instead for the more generic and convenient API, with a static method on `JsArrayBuffer` just for the sake of documentation.
+
+We should also reach out to the rustdoc maintainers to see if they might consider future functionality for allowing smart pointer types like `Handle` to move or copy their method docs onto the pages of their target types.
+
 ## Cost of multiple FFI calls
 
-The `.buffer()`, `.byte_offset()`, `.len()`, and `.byte_length()` methods all make FFI calls to the same underlying Node-API function ([`napi_get_typedarray_info`][napi_get_typedarray_info]), which incurs unnecessary FFI overhead. Unfortunately, the semantics of JavaScript buffer detachment means that `.byte_offset()`, `.len()`, and `.byte_length()` can all change their value over time, which means it's not safe to cache the results of this FFI call.
+The `.buffer()`, `.offset()`, `.len()`, and `.size()` methods all make FFI calls to the same underlying Node-API function ([`napi_get_typedarray_info`][napi_get_typedarray_info]), which incurs unnecessary FFI overhead. Unfortunately, the semantics of JavaScript buffer detachment means that `.offset()`, `.len()`, and `.size()` can all change their value over time, which means it's not safe to cache the results of this FFI call.
 
-The `.to_region()` method mitigates this issue by allowing performance-conscious Neon users to incur a single FFI call to retrieve all these values at once.
+The `.region()` method mitigates this issue by allowing performance-conscious Neon users to incur a single FFI call to retrieve all these values at once.
 
 # Rationale and alternatives
 [alternatives]: #alternatives
@@ -276,17 +298,21 @@ let arr = JsUint32Array::from_region(&mut cx, buf.region(4, 2))?;
 
 ## Flat constructor for `from_region`
 
-This RFC's design makes `from_region` and `to_region` symmetric signatures with `Region` as an input type vs. return type, respectively. An alternative approach would be to make `from_region` take the `byte_offset` and `len` as immediate arguments of `from_region`, and have `to_region` return a tuple. However, this would risk being more error-prone: users would have to remember what the two different `usize` elements of the tuple represent, and it would be easy to confuse the `len` integer for a byte length. It would also be untyped (see above).
+This RFC's design makes `from_region` and `region` symmetric signatures with `Region` as an input type vs. return type, respectively. An alternative approach would be to make `from_region` take the `offset` and `len` as immediate arguments of `from_region`, and have `region` return a tuple. However, this would risk being more error-prone: users would have to remember what the two different `usize` elements of the tuple represent, and it would be easy to confuse the `len` integer for a byte length. It would also be untyped (see above).
 
 ## Builder pattern for `Region`
 
-Instead of `buffer.region(offset, len)`, we could expose builder methods for constructing regions, like `buffer.byte_offset(offset).len(len)`. This would have the benefit of making the semantics of the integers more unambiguous, but doesn't seem worth the extra verbosity.
+Instead of `buffer.region(offset, len)`, we could expose builder methods for constructing regions, like `buffer.offset(offset).len(len)`. This would have the benefit of making the semantics of the integers more unambiguous, but doesn't seem worth the extra verbosity.
 
 ## Alternative names for `Region`
 
 One option would be to use "slice" terminology, since a `Region` is similar to a Rust slice. But a slice is a particular datatype in Rust, whereas this is a custom type. Also, a slice is a live view, and a region is more like a _description_ of a slice but it's not a live view until it's converted to a typed array.
 
 Another option would be "range" terminology, but again, a [range][std::ops::Range] is a specific thing in Rust.
+
+## Compositional regions
+
+We could add a combinator to `Region` that produces sub-regions, but this would require validation to avoid allowing nonsensical cases like misaligned regions or region overruns. This validation conflicts with the design approach of this RFC, which defers validation to the FFI call of constructing a typed array from a region. So we stick with a flat type that serves only as an intermediate data structure for the conversion between buffers and typed arrays. This is also consistent with the architecture of the JavaScript typed array design, which is also flat (for example, it does not offer views-of-views).
 
 
 # Unresolved questions
@@ -297,8 +323,13 @@ None.
 [std::ops::Index]: https://doc.rust-lang.org/stable/std/ops/trait.Index.html
 [std::ops::Range]: https://doc.rust-lang.org/stable/std/ops/struct.Range.html
 [std::ops::Index::index]: https://doc.rust-lang.org/stable/std/ops/trait.Index.html#tymethod.index
+[std::vec::Vec::len]: https://doc.rust-lang.org/stable/std/vec/struct.Vec.html#method.len
+[std::primitive::str::len]: https://doc.rust-lang.org/stable/std/primitive.str.html#method.len
+[std::alloc::Layout::size]: https://doc.rust-lang.org/stable/std/alloc/struct.Layout.html#method.size
+[std::fs::Metadata::size]: https://doc.rust-lang.org/stable/std/fs/struct.Metadata.html#method.size
 [neon::handle::Handle]: https://docs.rs/neon/latest/neon/handle/struct.Handle.html
 [neon::types::JsArrayBuffer]: https://docs.rs/neon/latest/neon/types/struct.JsArrayBuffer.html
+[neon::types::JsFunction::call_with]: https://docs.rs/neon/latest/neon/types/struct.JsFunction.html#method.call_with
 [napi_get_typedarray_info]: https://nodejs.org/api/n-api.html#napi_get_typedarray_info
 [Uint8Array]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array
 [Int8Array]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Int8Array
